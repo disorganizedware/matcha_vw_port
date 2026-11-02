@@ -191,13 +191,6 @@ do
 		}
 	end
 
-	-- ===== AutoCharge =====
-	-- Commented out in the Vape source too; it patched SwordController.sendServerRequest.
-	V.module{
-		name = "AutoCharge", cat = "Combat",
-		tip = "Not supported on Matcha: patches SwordController internals (no hooking). Killaura already sends chargeRatio 0 hits.",
-	}
-
 	-- ===== LongJump =====
 	do
 		local ORDER = { "tnt", "siege_tnt", "pirate_gunpowder_barrel", "fireball", "grappling_hook", "jade_hammer", "void_axe",

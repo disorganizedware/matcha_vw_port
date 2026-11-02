@@ -958,19 +958,10 @@ end
 
 do
 	V.module{
-		name = "HitBoxes", cat = "Blatant", tip = "Approximation: clicks send an extra SwordHit at targets up to Expand studs away (server cap ~17). Mode is ignored",
+		name = "HitBoxes", cat = "Blatant", tip = "Approximation: clicks send an extra SwordHit at targets up to Expand studs away (server cap ~17)",
 		ui = function(m, sec)
-			sec:Combo(m.id("mode"), "Mode", { "Sword", "Player" }, 0)
 			sec:SliderFloat(m.id("expand"), "Expand amount", 0, 14.4, 14.4, "%.1f")
 		end,
-	}
-	V.module{
-		name = "InfiniteFly", cat = "Blatant", tip = "Not supported on Matcha: needs to clone/reparent HumanoidRootPart (no Instance.Clone/Parent writes) to desync the server position",
-		ui = function(m, sec) sec:Text("Unavailable on Matcha") end,
-	}
-	V.module{
-		name = "KeepSprint", cat = "Blatant", tip = "Not supported on Matcha: patches a constant in SprintController.startSprinting (no debug.setconstant)",
-		ui = function(m, sec) sec:Text("Unavailable on Matcha") end,
 	}
 end
 -- mods_b: Killaura, AutoCharge, LongJump, NoFall, BlockIn, NoSlowdown, ProjectileAimbot, ProjectileAura, Kit Speed Fix, Speed
@@ -1165,13 +1156,6 @@ do
 			end,
 		}
 	end
-
-	-- ===== AutoCharge =====
-	-- Commented out in the Vape source too; it patched SwordController.sendServerRequest.
-	V.module{
-		name = "AutoCharge", cat = "Combat",
-		tip = "Not supported on Matcha: patches SwordController internals (no hooking). Killaura already sends chargeRatio 0 hits.",
-	}
 
 	-- ===== LongJump =====
 	do
@@ -2214,7 +2198,7 @@ do
 
 	V.module{
 		name = "AutoKit", cat = "Utility",
-		tip = "Automatically uses kit abilities. No-op on Matcha: ember, block_kicker, cat, davey, fisherman, gingerbread_man, void_dragon, spirit_assassin, wizard (need controller hooks)",
+		tip = "Automatically uses kit abilities",
 		ui = function(m, sec)
 			sec:Toggle(m.id("legit"), "Legit Range", false)
 			for _, k in ipairs(sorted) do sec:Toggle(m.id("kit_" .. k), NAMES[k], true) end
@@ -2306,13 +2290,6 @@ do
 	}
 end
 
--- ===== AutoPlay =====
-V.module{
-	name = "AutoPlay", cat = "Utility",
-	tip = "Not supported on Matcha: needs the queue controller and match-end events (no controllers, no Vape event bus)",
-	ui = function(m, sec) sec:Toggle(m.id("random"), "Random", false) end,
-}
-
 -- ===== AutoShoot =====
 do
 	local shooting, wasDown = false, false
@@ -2366,10 +2343,9 @@ do
 
 	V.module{
 		name = "AutoToxic", cat = "Utility",
-		tip = "Kill/Death/Bed approximated from nearby entities vanishing; AutoGG, Win and Bed Destroyed need game events (not supported). Separate messages with |",
+		tip = "Kill/Death/Bed approximated from nearby entities vanishing. Separate messages with |",
 		ui = function(m, sec)
-			sec:Toggle(m.id("autogg"), "AutoGG (unsupported)", true)
-			for _, v in ipairs({ "Kill", "Death", "Bed", "BedDestroyed", "Win" }) do
+			for _, v in ipairs({ "Kill", "Death", "Bed" }) do
 				sec:Toggle(m.id(v:lower()), v .. " ", false)
 				sec:InputText(m.id(v:lower() .. "msgs"), v .. " messages", "")
 			end
@@ -2556,7 +2532,7 @@ V.module{
 do
 	local tried, last = {}, 0
 	V.module{
-		name = "PickupRange", cat = "Utility", tip = "Picks up items from a farther distance (Network TP not supported)",
+		name = "PickupRange", cat = "Utility", tip = "Picks up items from a farther distance",
 		ui = function(m, sec)
 			sec:SliderInt(m.id("range"), "Range", 1, 10, 10)
 			sec:Toggle(m.id("feet"), "Feet Check", false)
@@ -2587,7 +2563,7 @@ do
 end
 -- mods_d: Scaffold, ShopTierBypass, StaffDetector, TrapDisabler, Anti-AFK, AutoTool, BetterDavey, BedProtector,
 -- ChestSteal, Schematica, AutoWhisper, ArmorSwitch, AutoBuy, AutoConsume
--- Shared helpers added to V: isBlockName, scan, posOf, nearBed, setVelY, unsupported
+-- Shared helpers added to V: isBlockName, scan, posOf, nearBed, setVelY
 
 local BLOCK_PATTERNS = { "wool", "plank", "stone_brick", "ceramic", "obsidian", "clay", "glass", "end_stone", "_block", "bricks" }
 function V.isBlockName(n)
@@ -2629,7 +2605,6 @@ function V.setVelY(root, y)
 	local v = root.AssemblyLinearVelocity
 	if v then root.AssemblyLinearVelocity = Vector3.new(v.X, y, v.Z) end
 end
-local NOTSUP = "Not supported on Matcha: "
 local function splitList(str)
 	local t = {}
 	for s in tostring(str or ""):gmatch("[^,]+") do
@@ -2761,7 +2736,6 @@ end
 
 -- ===== ShopTierBypass =====
 do
-	V.module{ name = "ShopTierBypass", cat = "Utility", tip = NOTSUP .. "edits the client shop module's tier data (requires module access); the server enforces tiers anyway." }
 end
 
 -- ===== StaffDetector =====
@@ -2829,7 +2803,6 @@ end
 
 -- ===== TrapDisabler =====
 do
-	V.module{ name = "TrapDisabler", cat = "Utility", tip = NOTSUP .. "hooked the client's StepOnSnapTrap remote (no hookfunction/hookmetamethod)." }
 end
 
 -- ===== Anti-AFK =====
@@ -2884,18 +2857,6 @@ do
 			if not b or b:GetAttribute("NoBreak") then return end
 			local tool = toolFor(b.Name)
 			if tool then V.equip(tool) end
-		end,
-	}
-end
-
--- ===== BetterDavey =====
-do
-	V.module{
-		name = "BetterDavey", cat = "Utility", tip = NOTSUP .. "wraps client CannonController/CannonHandController functions (needs hooking).",
-		ui = function(m, sec)
-			sec:Toggle(m.id("autojump"), "Auto jump", true)
-			sec:Toggle(m.id("autolaunch"), "Auto launch", true)
-			sec:Toggle(m.id("autobreak"), "Auto break", true)
 		end,
 	}
 end
@@ -3446,14 +3407,12 @@ do
 	end
 
 	V.module{
-		name = "AutoBuy", cat = "Inventory", tip = "Automatically buys swords, armor and your buy list when near a shop NPC. Shop GUI Check is ignored (UI state unreadable).",
+		name = "AutoBuy", cat = "Inventory", tip = "Automatically buys swords, armor and your buy list when near a shop NPC.",
 		ui = function(m, sec)
 			sec:SliderInt(m.id("range"), "Range", 1, 20, 20)
 			sec:Toggle(m.id("armor"), "Buy Armor", true)
 			sec:Toggle(m.id("sword"), "Buy Sword", true)
 			sec:Toggle(m.id("axolotl"), "Buy Axolotl", true)
-			sec:Toggle(m.id("guicheck"), "Shop GUI Check", false)
-			sec:Toggle(m.id("tierskip"), "Tier Skip", true)
 			sec:InputText(m.id("buylist"), "BuyList item/amount/priority/after (comma list)", "")
 		end,
 		step = function(m)
@@ -3503,7 +3462,7 @@ do
 	}
 end
 -- mods_e: AutoHotbar, FastConsume, FastDrop, BedPlates, Nuker, and the Legit modules (main.lua 9458-12260)
--- Shared helpers (on V to spare chunk locals): V.combo, V.getColor, V.track, V.stub, V.drops
+-- Shared helpers (on V to spare chunk locals): V.combo, V.getColor, V.track, V.drops
 
 function V.combo(m, id, items, default)
 	local i = m.opt(id, default or 0)
@@ -3525,9 +3484,6 @@ function V.track(m, class, props)
 	return d
 end
 
-function V.stub(name, cat, reason)
-	return V.module{ name = name, cat = cat, tip = "Not supported on Matcha: " .. reason }
-end
 
 -- Health drops of tracked entities since the consumer last asked: { {e=, pos=, amount=, t=} }
 -- ponytail: sampled from V.entities (4 Hz), so rapid hits merge into one drop.
@@ -3835,14 +3791,6 @@ do
 end
 
 -- ===== Legit =====
-V.stub("Clean Kit", "Legit", "hides a Roact GUI element / hooks WindWalkerController")
-V.stub("FPS Boost", "Legit", "needs controller hooks (kill effects, visualizer, nametags)")
-V.stub("HitFix", "Combat", "debug.setconstant/upvalue on SwordController (disabled in the source too)")
-V.stub("Interface", "Legit", "patches Roact constants of the hotbar/healthbar (disabled in the source too)")
-V.stub("Song Beats", "Legit", "no audio API (no Sound instances)")
-V.stub("SoundChanger", "Legit", "no audio API / SoundManager hook")
-V.stub("UI Cleanup", "Legit", "patches Roact constants and KillFeed controller (disabled in the source too)")
-V.stub("WinEffect", "Legit", "needs getconnections on a client remote")
 
 -- Crosshair: Drawing cross instead of a custom viewmodel image
 do

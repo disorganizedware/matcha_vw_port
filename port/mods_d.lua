@@ -1,6 +1,6 @@
 -- mods_d: Scaffold, ShopTierBypass, StaffDetector, TrapDisabler, Anti-AFK, AutoTool, BetterDavey, BedProtector,
 -- ChestSteal, Schematica, AutoWhisper, ArmorSwitch, AutoBuy, AutoConsume
--- Shared helpers added to V: isBlockName, scan, posOf, nearBed, setVelY, unsupported
+-- Shared helpers added to V: isBlockName, scan, posOf, nearBed, setVelY
 
 local BLOCK_PATTERNS = { "wool", "plank", "stone_brick", "ceramic", "obsidian", "clay", "glass", "end_stone", "_block", "bricks" }
 function V.isBlockName(n)
@@ -42,7 +42,6 @@ function V.setVelY(root, y)
 	local v = root.AssemblyLinearVelocity
 	if v then root.AssemblyLinearVelocity = Vector3.new(v.X, y, v.Z) end
 end
-local NOTSUP = "Not supported on Matcha: "
 local function splitList(str)
 	local t = {}
 	for s in tostring(str or ""):gmatch("[^,]+") do
@@ -174,7 +173,6 @@ end
 
 -- ===== ShopTierBypass =====
 do
-	V.module{ name = "ShopTierBypass", cat = "Utility", tip = NOTSUP .. "edits the client shop module's tier data (requires module access); the server enforces tiers anyway." }
 end
 
 -- ===== StaffDetector =====
@@ -242,7 +240,6 @@ end
 
 -- ===== TrapDisabler =====
 do
-	V.module{ name = "TrapDisabler", cat = "Utility", tip = NOTSUP .. "hooked the client's StepOnSnapTrap remote (no hookfunction/hookmetamethod)." }
 end
 
 -- ===== Anti-AFK =====
@@ -297,18 +294,6 @@ do
 			if not b or b:GetAttribute("NoBreak") then return end
 			local tool = toolFor(b.Name)
 			if tool then V.equip(tool) end
-		end,
-	}
-end
-
--- ===== BetterDavey =====
-do
-	V.module{
-		name = "BetterDavey", cat = "Utility", tip = NOTSUP .. "wraps client CannonController/CannonHandController functions (needs hooking).",
-		ui = function(m, sec)
-			sec:Toggle(m.id("autojump"), "Auto jump", true)
-			sec:Toggle(m.id("autolaunch"), "Auto launch", true)
-			sec:Toggle(m.id("autobreak"), "Auto break", true)
 		end,
 	}
 end
@@ -859,14 +844,12 @@ do
 	end
 
 	V.module{
-		name = "AutoBuy", cat = "Inventory", tip = "Automatically buys swords, armor and your buy list when near a shop NPC. Shop GUI Check is ignored (UI state unreadable).",
+		name = "AutoBuy", cat = "Inventory", tip = "Automatically buys swords, armor and your buy list when near a shop NPC.",
 		ui = function(m, sec)
 			sec:SliderInt(m.id("range"), "Range", 1, 20, 20)
 			sec:Toggle(m.id("armor"), "Buy Armor", true)
 			sec:Toggle(m.id("sword"), "Buy Sword", true)
 			sec:Toggle(m.id("axolotl"), "Buy Axolotl", true)
-			sec:Toggle(m.id("guicheck"), "Shop GUI Check", false)
-			sec:Toggle(m.id("tierskip"), "Tier Skip", true)
 			sec:InputText(m.id("buylist"), "BuyList item/amount/priority/after (comma list)", "")
 		end,
 		step = function(m)

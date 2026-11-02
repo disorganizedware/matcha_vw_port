@@ -1,5 +1,5 @@
 -- mods_e: AutoHotbar, FastConsume, FastDrop, BedPlates, Nuker, and the Legit modules (main.lua 9458-12260)
--- Shared helpers (on V to spare chunk locals): V.combo, V.getColor, V.track, V.stub, V.drops
+-- Shared helpers (on V to spare chunk locals): V.combo, V.getColor, V.track, V.drops
 
 function V.combo(m, id, items, default)
 	local i = m.opt(id, default or 0)
@@ -21,9 +21,6 @@ function V.track(m, class, props)
 	return d
 end
 
-function V.stub(name, cat, reason)
-	return V.module{ name = name, cat = cat, tip = "Not supported on Matcha: " .. reason }
-end
 
 -- Health drops of tracked entities since the consumer last asked: { {e=, pos=, amount=, t=} }
 -- ponytail: sampled from V.entities (4 Hz), so rapid hits merge into one drop.
@@ -331,14 +328,6 @@ do
 end
 
 -- ===== Legit =====
-V.stub("Clean Kit", "Legit", "hides a Roact GUI element / hooks WindWalkerController")
-V.stub("FPS Boost", "Legit", "needs controller hooks (kill effects, visualizer, nametags)")
-V.stub("HitFix", "Combat", "debug.setconstant/upvalue on SwordController (disabled in the source too)")
-V.stub("Interface", "Legit", "patches Roact constants of the hotbar/healthbar (disabled in the source too)")
-V.stub("Song Beats", "Legit", "no audio API (no Sound instances)")
-V.stub("SoundChanger", "Legit", "no audio API / SoundManager hook")
-V.stub("UI Cleanup", "Legit", "patches Roact constants and KillFeed controller (disabled in the source too)")
-V.stub("WinEffect", "Legit", "needs getconnections on a client remote")
 
 -- Crosshair: Drawing cross instead of a custom viewmodel image
 do

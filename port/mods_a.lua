@@ -469,18 +469,9 @@ end
 
 do
 	V.module{
-		name = "HitBoxes", cat = "Blatant", tip = "Approximation: clicks send an extra SwordHit at targets up to Expand studs away (server cap ~17). Mode is ignored",
+		name = "HitBoxes", cat = "Blatant", tip = "Approximation: clicks send an extra SwordHit at targets up to Expand studs away (server cap ~17)",
 		ui = function(m, sec)
-			sec:Combo(m.id("mode"), "Mode", { "Sword", "Player" }, 0)
 			sec:SliderFloat(m.id("expand"), "Expand amount", 0, 14.4, 14.4, "%.1f")
 		end,
-	}
-	V.module{
-		name = "InfiniteFly", cat = "Blatant", tip = "Not supported on Matcha: needs to clone/reparent HumanoidRootPart (no Instance.Clone/Parent writes) to desync the server position",
-		ui = function(m, sec) sec:Text("Unavailable on Matcha") end,
-	}
-	V.module{
-		name = "KeepSprint", cat = "Blatant", tip = "Not supported on Matcha: patches a constant in SprintController.startSprinting (no debug.setconstant)",
-		ui = function(m, sec) sec:Text("Unavailable on Matcha") end,
 	}
 end

@@ -1,6 +1,6 @@
 # matcha_vw_port
 
-Voidware/Vape BedWars port for the [Matcha](https://huoadf.github.io/matcha-docs/) LuaVM. 74 modules, menus built with Matcha's own UI bindings (one tab per Vape category).
+Voidware/Vape BedWars port for the [Matcha](https://huoadf.github.io/matcha-docs/) LuaVM. 59 modules, menus built with Matcha's own UI bindings (one tab per Vape category).
 
 ## Run
 
@@ -23,4 +23,4 @@ Stop with `_G.VapeStop()` or the Uninject button in the **Vape** tab.
 
 Tested in the BedWars training arena: Killaura, AutoBuy purchases, block placing/breaking, entity/bed/chest detection, ESPs. Everything else is untested in a real match.
 
-Not supported on Matcha (they needed hooks): InfiniteFly, KeepSprint, AutoCharge, ShopTierBypass, TrapDisabler, BetterDavey, AutoPlay, and several cosmetic Legit modules. They show a tip in the menu and do nothing.
+Vape modules that only worked through hooks or client-module internals (InfiniteFly, KeepSprint, AutoCharge, ShopTierBypass, TrapDisabler, BetterDavey, AutoPlay, HitFix and the cosmetic Legit ones) aren't included.

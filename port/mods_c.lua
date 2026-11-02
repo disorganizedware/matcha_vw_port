@@ -578,7 +578,7 @@ do
 
 	V.module{
 		name = "AutoKit", cat = "Utility",
-		tip = "Automatically uses kit abilities. No-op on Matcha: ember, block_kicker, cat, davey, fisherman, gingerbread_man, void_dragon, spirit_assassin, wizard (need controller hooks)",
+		tip = "Automatically uses kit abilities",
 		ui = function(m, sec)
 			sec:Toggle(m.id("legit"), "Legit Range", false)
 			for _, k in ipairs(sorted) do sec:Toggle(m.id("kit_" .. k), NAMES[k], true) end
@@ -670,13 +670,6 @@ do
 	}
 end
 
--- ===== AutoPlay =====
-V.module{
-	name = "AutoPlay", cat = "Utility",
-	tip = "Not supported on Matcha: needs the queue controller and match-end events (no controllers, no Vape event bus)",
-	ui = function(m, sec) sec:Toggle(m.id("random"), "Random", false) end,
-}
-
 -- ===== AutoShoot =====
 do
 	local shooting, wasDown = false, false
@@ -730,10 +723,9 @@ do
 
 	V.module{
 		name = "AutoToxic", cat = "Utility",
-		tip = "Kill/Death/Bed approximated from nearby entities vanishing; AutoGG, Win and Bed Destroyed need game events (not supported). Separate messages with |",
+		tip = "Kill/Death/Bed approximated from nearby entities vanishing. Separate messages with |",
 		ui = function(m, sec)
-			sec:Toggle(m.id("autogg"), "AutoGG (unsupported)", true)
-			for _, v in ipairs({ "Kill", "Death", "Bed", "BedDestroyed", "Win" }) do
+			for _, v in ipairs({ "Kill", "Death", "Bed" }) do
 				sec:Toggle(m.id(v:lower()), v .. " ", false)
 				sec:InputText(m.id(v:lower() .. "msgs"), v .. " messages", "")
 			end
@@ -920,7 +912,7 @@ V.module{
 do
 	local tried, last = {}, 0
 	V.module{
-		name = "PickupRange", cat = "Utility", tip = "Picks up items from a farther distance (Network TP not supported)",
+		name = "PickupRange", cat = "Utility", tip = "Picks up items from a farther distance",
 		ui = function(m, sec)
 			sec:SliderInt(m.id("range"), "Range", 1, 10, 10)
 			sec:Toggle(m.id("feet"), "Feet Check", false)
