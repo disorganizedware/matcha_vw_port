@@ -12,6 +12,12 @@ Or copy `vape_matcha.lua` to your Matcha workspace and run `loadstring(readfile(
 
 Stop with `_G.VapeStop()` or the Uninject button in the **Vape** tab.
 
+## Configs
+
+The **Vape** tab has a Config section: type a name and Save, pick one from the list to Load or Delete, and Set autoload to load it on every run. Configs are JSON files in `<Matcha workspace>/vape/configs/`.
+
+Combat and movement modules have a keybind; set-and-forget ones (AutoKit, ESPs, AutoBuy, ...) only have the toggle.
+
 ## Layout
 
 `vape_matcha.lua` is the built file: `port/00_core.lua`, `port/mods_a..e.lua` and `port/99_boot.lua` concatenated in that order.

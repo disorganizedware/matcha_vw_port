@@ -74,6 +74,7 @@ function V.get(id, default)
 	local v = vals[id]
 	if v == nil then
 		v = UI.GetValue(id)
+		if v == nil then v = V.cfgVal[id] end -- loaded config value for a widget not drawn yet
 		if v == nil then v = NIL end
 		vals[id] = v
 	end
@@ -461,31 +462,253 @@ function V.isOn(m)
 	return m.enabled
 end
 
+-- ===== configs =====
+-- Saved as JSON in the Matcha workspace: vape/configs/<name>.json = { values = {id = value}, keys = {id = {key, type}} }.
+-- Matcha widgets only exist once their tab has been drawn, so a loaded value is kept in V.cfgVal (V.get falls back
+-- to it) and pushed into the widget the first time it's drawn (see V.wrapSec).
+-- ponytail: a module's keybind from a config takes effect once its tab has been opened, since the keybind widget
+-- (m.kbw) only exists after that.
+local CFG_DIR = "vape/configs/"
+V.cfgVal, V.cfgRaw, V.cfgKeys = {}, {}, {}
+V.widgets, V.kbs = {}, {}
+local pendingVal, pendingKey = {}, {}
+
+local function enc(v)
+	local t = typeof(v)
+	if t == "Color3" then return { __c = { v.R, v.G, v.B } } end
+	if t == "EnumItem" then return { __e = tostring(v) } end
+	if t == "table" then
+		local o = {}
+		for k, x in pairs(v) do o[k] = enc(x) end
+		return o
+	end
+	if t == "number" or t == "boolean" or t == "string" then return v end
+	return nil
+end
+local function dec(v)
+	if type(v) ~= "table" then return v end
+	if v.__c then
+		local r, g, b = v.__c[1], v.__c[2], v.__c[3]
+		if r > 1 or g > 1 or b > 1 then return Color3.fromRGB(r, g, b) end
+		return Color3.new(r, g, b)
+	end
+	if v.__e then
+		local name = tostring(v.__e):match("Enum%.KeyCode%.(.+)")
+		local ok, e = pcall(function() return Enum.KeyCode[name] end)
+		return ok and e or 0
+	end
+	local o = {}
+	for k, x in pairs(v) do o[k] = dec(x) end
+	return o
+end
+local function applyKey(w, kv)
+	if kv.key ~= nil then pcall(w.SetKey, w, dec(kv.key)) end
+	if kv.type then pcall(w.SetType, w, kv.type) end
+end
+local function saved(id) return type(id) == "string" and id:sub(1, 9) ~= "vape_cfg_" end
+
+-- called for every id widget as it's drawn: records it and applies any pending loaded value
+function V.onWidget(kind, id, w, ...)
+	if not saved(id) then return end
+	V.widgets[id] = kind
+	if kind == "Keybind" then
+		V.kbs[id] = w
+		local kv = pendingKey[id]
+		if kv and w then applyKey(w, kv); pendingKey[id] = nil end
+	end
+	if pendingVal[id] ~= nil then
+		pcall(UI.SetValue, id, pendingVal[id])
+		pendingVal[id] = nil
+		vals[id] = nil
+	end
+	if kind == "ColorPicker2" then
+		local id2 = select(2, ...)
+		if id2 then V.onWidget("ColorPicker", id2, nil) end
+	end
+end
+
+-- section proxy that reports id widgets to V.onWidget; non-function fields (sec.page) pass through
+local ID_WIDGETS = { Toggle = true, Keybind = true, SliderInt = true, SliderFloat = true, Combo = true, ColorPicker = true, ColorPicker2 = true, InputText = true }
+local wrappers = {}
+local secMeta = { __index = function(p, k)
+	local real = rawget(p, "__sec")
+	local v = real[k]
+	if type(v) ~= "function" then return v end
+	local w = wrappers[k]
+	if not w then
+		if ID_WIDGETS[k] then
+			w = function(self, id, ...)
+				local s = rawget(self, "__sec")
+				local r = s[k](s, id, ...)
+				V.onWidget(k, id, r, ...)
+				return r
+			end
+		else
+			w = function(self, ...) local s = rawget(self, "__sec"); return s[k](s, ...) end
+		end
+		wrappers[k] = w
+	end
+	return w
+end }
+function V.wrapSec(sec) return setmetatable({ __sec = sec }, secMeta) end
+
+-- every option id, found by dry-running each module's ui() against a recording section at boot
+-- (UI.GetValue/SetValue work on ids whose tab was never opened, so configs cover all of them)
+V.allIds = {}
+local function registerIds()
+	local stubW = setmetatable({ value = false }, { __index = function() return function() return 0 end end })
+	local rec = setmetatable({ page = 0 }, { __index = function(_, k)
+		return function(_, id, ...)
+			if ID_WIDGETS[k] and saved(id) then
+				V.allIds[id] = k
+				if k == "ColorPicker2" then local id2 = select(2, ...); if saved(id2) then V.allIds[id2] = "ColorPicker" end end
+			end
+			return stubW
+		end
+	end })
+	for _, m in ipairs(V.mods) do
+		V.allIds[m.id("on")] = "Toggle"
+		if m.ui then pcall(m.ui, m, rec) end
+	end
+	for _, id in ipairs({ "vape_friends_on", "vape_friends", "vape_targets" }) do V.allIds[id] = "Toggle" end
+end
+
+function V.cfgList()
+	local out = {}
+	if isfolder(CFG_DIR) then
+		for _, p in ipairs(listfiles(CFG_DIR)) do
+			local n = tostring(p):match("([^/\\]+)%.json$")
+			if n then out[#out + 1] = n end
+		end
+	end
+	return out
+end
+
+function V.saveConfig(name)
+	name = tostring(name or ""):gsub("[^%w_%- ]", "")
+	if name == "" then return false end
+	local out = { values = {}, keys = {} }
+	for id, raw in pairs(V.cfgRaw) do out.values[id] = raw end
+	for id, kind in pairs(V.allIds) do
+		if kind ~= "Keybind" then
+			local v = enc(UI.GetValue(id))
+			if v ~= nil then out.values[id] = v end
+		end
+	end
+	for id, kv in pairs(V.cfgKeys) do out.keys[id] = kv end
+	for id, w in pairs(V.kbs) do
+		local ok, k = pcall(w.GetKey, w)
+		local ok2, t = pcall(w.GetType, w)
+		out.keys[id] = { key = ok and enc(k) or 0, type = ok2 and t or "toggle" }
+	end
+	local ok = pcall(writefile, CFG_DIR .. name .. ".json", HttpService:JSONEncode(out))
+	return ok
+end
+
+function V.loadConfig(name)
+	local path = CFG_DIR .. tostring(name) .. ".json"
+	if not isfile(path) then return false end
+	local ok, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
+	if not ok or type(data) ~= "table" then return false end
+	V.cfgVal, V.cfgRaw, V.cfgKeys = {}, {}, data.keys or {}
+	pendingVal, pendingKey = {}, {}
+	for id, raw in pairs(data.values or {}) do
+		if saved(id) then
+			local v = dec(raw)
+			V.cfgRaw[id], V.cfgVal[id] = raw, v
+			pcall(UI.SetValue, id, v)
+			if not V.widgets[id] then pendingVal[id] = v end -- re-applied when its tab first draws
+		end
+	end
+	for id, kv in pairs(V.cfgKeys) do
+		local w = V.kbs[id]
+		if w then applyKey(w, kv) else pendingKey[id] = kv end
+	end
+	for k in pairs(vals) do vals[k] = nil end
+	return true
+end
+
+function V.deleteConfig(name)
+	return pcall(delfile, CFG_DIR .. tostring(name) .. ".json")
+end
+
+-- set-and-forget modules: toggle only, no keybind widget
+V.NOBIND = {}
+for _, n in ipairs({
+	"NoClickDelay", "Sprint", "NoSlowdown", "AntiVoid", "NoFall", "PickupRange", "Kit Speed Fix",
+	"ArmorSwitch", "AutoBank", "AutoBuy", "AutoConsume", "AutoHotbar", "FastConsume", "FastDrop",
+	"Crosshair", "Damage Indicator", "FOV", "Hit Color", "Kill Effect", "Reach Display", "Viewmodel",
+	"BedPlates", "BedESP", "Health", "KitESP", "NameTags", "StorageESP",
+	"AutoBalloon", "AutoKit", "AutoPearl", "AutoShoot", "AutoToxic", "AutoVoidDrop", "StaffDetector",
+	"Anti-AFK", "AutoSuffocate", "AutoTool", "AutoWhisper", "ChestSteal",
+}) do V.NOBIND[n] = true end
+
 -- ===== boot (called at the end of the concatenated file) =====
 function V.boot()
+	registerIds()
 	for _, cat in ipairs(V.CATEGORIES) do
 		local list = V.cats[cat]
 		if list then
 			UI.AddTab("Vape " .. cat, function(tab)
 				for i, m in ipairs(list) do
-					local sec = tab:Section(m.name, i % 2 == 1 and "Left" or "Right")
+					local sec = V.wrapSec(tab:Section(m.name, i % 2 == 1 and "Left" or "Right"))
 					sec:Toggle(m.id("on"), "Enabled", false)
-					m.kbw = sec:Keybind(m.id("kb"), m.key or 0, "toggle")
+					if not V.NOBIND[m.name] then m.kbw = sec:Keybind(m.id("kb"), m.key or 0, "toggle") end
 					if m.tip then sec:Tip(m.tip) end
 					if m.ui then safe(m, m.ui, sec) end
 				end
 			end)
 		end
 	end
+	local cfgNames, cfgCombo = V.cfgList(), nil
+	local function refreshList()
+		cfgNames = V.cfgList()
+		if cfgCombo then
+			pcall(function()
+				cfgCombo:Clear()
+				for _, n in ipairs(cfgNames) do cfgCombo:Add(n) end
+			end)
+		end
+	end
+	local function selected()
+		local ok, t = pcall(function() return cfgCombo and cfgCombo:GetText() end)
+		if ok and t and t ~= "" then return t end
+		return cfgNames[1]
+	end
 	UI.AddTab("Vape", function(tab)
-		local s = tab:Section("Friends & Targets", "Left")
+		local s = V.wrapSec(tab:Section("Friends & Targets", "Left"))
 		s:Toggle("vape_friends_on", "Use friends", true)
 		s:InputText("vape_friends", "Friends (comma list)", "")
 		s:InputText("vape_targets", "Priority targets", "")
+		local c = tab:Section("Config", "Right")
+		c:InputText("vape_cfg_name", "Config name", "default")
+		c:Button("Save", function()
+			local name = V.get("vape_cfg_name", "default")
+			if V.saveConfig(name) then refreshList(); V.notify("Saved config " .. name) else V.notify("Couldn't save " .. tostring(name)) end
+		end)
+		cfgCombo = c:Combo("vape_cfg_list", "Saved configs", cfgNames, 0)
+		c:Button("Load", function()
+			local name = selected()
+			if name and V.loadConfig(name) then V.notify("Loaded config " .. name) else V.notify("No config to load") end
+		end)
+		c:Button("Delete", function()
+			local name = selected()
+			if name then V.deleteConfig(name); refreshList(); V.notify("Deleted config " .. name) end
+		end)
+		c:Button("Set autoload", function()
+			local name = selected()
+			if name then pcall(writefile, "vape/autoload.txt", name); V.notify("Autoload: " .. name) end
+		end)
+		c:Button("Clear autoload", function() pcall(delfile, "vape/autoload.txt"); V.notify("Autoload cleared") end)
+		c:Button("Refresh list", refreshList)
 		local s2 = tab:Section("Session", "Right")
 		s2:Text("Vape for Matcha")
 		s2:Button("Uninject", function() task.spawn(_G.VapeStop) end)
 	end)
+	if isfile("vape/autoload.txt") then
+		local name = readfile("vape/autoload.txt")
+		if V.loadConfig(name) then V.notify("Loaded config " .. name, "Vape", 3) end
+	end
 
 	-- module enabled = toggle on and (no key bound or keybind active)
 	local function wanted(m)
