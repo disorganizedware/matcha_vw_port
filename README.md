@@ -4,11 +4,11 @@ Voidware/Vape BedWars port for the [Matcha](https://huoadf.github.io/matcha-docs
 
 ## Run
 
-Copy `vape_matcha.lua` to your Matcha workspace and execute:
-
 ```lua
-loadstring(readfile("vape_matcha.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/disorganizedware/matcha_vw_port/main/vape_matcha.lua"))()
 ```
+
+Or copy `vape_matcha.lua` to your Matcha workspace and run `loadstring(readfile("vape_matcha.lua"))()`.
 
 Stop with `_G.VapeStop()` or the Uninject button in the **Vape** tab.
 
