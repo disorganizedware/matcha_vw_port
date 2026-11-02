@@ -278,7 +278,7 @@ do
 				m.jt, m.js, m.dir, m.began, m.t0, m.armUntil, m.hint = 0, 0, nil, false, tick(), 0, nil
 				local c = V.char()
 				m.lastHP = c and c:GetAttribute("Health")
-				task.spawn(function() local ok, e = pcall(run, m); if not ok then warn("[Vape] LongJump: " .. tostring(e)) end end)
+				V.spawn(function() local ok, e = pcall(run, m); if not ok then warn("[Vape] LongJump: " .. tostring(e)) end end)
 			end,
 			disable = function(m) m.jt, m.js, m.dir = 0, 0, nil end,
 			step = function(m)
@@ -416,7 +416,7 @@ do
 				local list = blocks()
 				if #list == 0 then V.notify("No suitable blocks available", "BlockIn", 3) off(m) return end
 				local origin = root.Position
-				task.spawn(function()
+				V.spawn(function()
 					local idx = 1
 					for _, o in ipairs(PATTERN) do
 						if not m.enabled then break end

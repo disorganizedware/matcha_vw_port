@@ -20,7 +20,24 @@ function V.notify(msg, title, dur) notify(tostring(msg), title or "Vape", dur or
 function V.cam() return workspace.CurrentCamera end
 function V.flat(v) return Vector3.new(v.X, 0, v.Z) end
 function V.roundPos(v) return Vector3.new(math.round(v.X / 3) * 3, math.round(v.Y / 3) * 3, math.round(v.Z / 3) * 3) end
-function V.connect(signal, fn) local c = signal:Connect(fn); V.conns[#V.conns + 1] = c; return c end
+-- Matcha resumes threads and fires signal callbacks from C++: an uncaught Lua error there aborts app.exe
+-- (0xc0000409 in ucrtbase). Every thread and callback in Vape goes through these two, which never let one escape.
+local function report(err) warn("[Vape] " .. tostring(err)) end
+function V.spawn(fn, ...)
+	local args = { ... }
+	task.spawn(function()
+		local ok, err = pcall(fn, unpack(args))
+		if not ok then report(err) end
+	end)
+end
+function V.connect(signal, fn)
+	local c = signal:Connect(function(...)
+		local ok, err = pcall(fn, ...)
+		if not ok then report(err) end
+	end)
+	V.conns[#V.conns + 1] = c
+	return c
+end
 
 -- Drawing that is tracked for cleanup and starts hidden (fresh Drawings flash at 0,0)
 function V.draw(class, props)
@@ -60,8 +77,7 @@ function V.call(name, ...)
 end
 -- Same as V.call but on its own thread (InvokeServer yields)
 function V.callAsync(name, ...)
-	local args = { ... }
-	task.spawn(function() V.call(name, unpack(args)) end)
+	V.spawn(V.call, name, ...)
 end
 
 -- ===== UI value access (UI.GetValue is nil until the tab drew once) =====
@@ -69,7 +85,6 @@ end
 -- every frame without a Matcha UI call each time.
 local NIL = {}
 local vals = {}
-V._vals = vals
 function V.get(id, default)
 	local v = vals[id]
 	if v == nil then
@@ -321,6 +336,9 @@ function V.blockFolder()
 	return f
 end
 local function key(v) return math.round(v.X / 3) .. "," .. math.round(v.Y / 3) .. "," .. math.round(v.Z / 3) end
+-- V.blockGrid is only ever replaced, never edited, because other threads may be mid-`pairs` over it (editing it
+-- raised "invalid key to 'next'"). Blocks placed/broken since the last index live in these overlays instead.
+local placed, broken = {}, {}
 -- blocks never move, so a block's grid key is read once per instance (by Address); rescans only read new blocks
 local keyByAddr = {}
 function V.indexBlocks()
@@ -347,15 +365,21 @@ function V.indexBlocks()
 		end
 	end
 	keyByAddr = seen
+	placed, broken = {}, {}
 	V.blockGrid = g
 end
 function V.needBlocks() return tick() - V._blockUse < 10 or next(V.blockGrid) == nil end
 -- block lookups mark the grid as in use; the scheduler only re-indexes the map while that's recent
 V._blockUse = 0
 function V.grid() V._blockUse = tick(); return V.blockGrid end
-function V.blockAt(pos) V._blockUse = tick(); return V.blockGrid[key(pos)] end
+function V.blockAt(pos)
+	V._blockUse = tick()
+	local k = key(pos)
+	if broken[k] then return nil end
+	return placed[k] or V.blockGrid[k]
+end
 function V.blockPos(pos) return Vector3.new(math.round(pos.X / 3), math.round(pos.Y / 3), math.round(pos.Z / 3)) end -- block-engine grid coords
-function V.markPlaced(worldPos, part) V.blockGrid[key(worldPos)] = part or true end
+function V.markPlaced(worldPos, part) local k = key(worldPos); broken[k] = nil; placed[k] = part or true end
 
 -- place a block at a world position (snapped to grid) with held/any wool
 function V.placeBlock(worldPos, blockType)
@@ -377,8 +401,8 @@ function V.hitBlock(worldPos, normal)
 		hitPosition = bp * 3,
 		hitNormal = normal or Vector3.new(1, 0, 0),
 	})
-	local b = V.blockGrid[k]
-	if b and (b == true or not b.Parent) then V.blockGrid[k] = nil end
+	local b = placed[k] or V.blockGrid[k]
+	if b and (b == true or not b.Parent) then broken[k] = true; placed[k] = nil end
 	return ok, res
 end
 
@@ -624,7 +648,7 @@ function V.loadConfig(name)
 		local w = V.kbs[id]
 		if w then applyKey(w, kv) else pendingKey[id] = kv end
 	end
-	for k in pairs(vals) do vals[k] = nil end
+	vals = {}
 	return true
 end
 
@@ -703,7 +727,7 @@ function V.boot()
 		c:Button("Refresh list", refreshList)
 		local s2 = tab:Section("Session", "Right")
 		s2:Text("Vape for Matcha")
-		s2:Button("Uninject", function() task.spawn(_G.VapeStop) end)
+		s2:Button("Uninject", function() V.spawn(_G.VapeStop) end)
 	end)
 	if isfile("vape/autoload.txt") then
 		local name = readfile("vape/autoload.txt")
@@ -739,10 +763,11 @@ function V.boot()
 		end
 	end)
 
-	task.spawn(function()
+	V.spawn(function()
 		local n = 0
 		while V.running do
-			for k in pairs(vals) do vals[k] = nil end
+			local ok, err = pcall(function()
+			vals = {}
 			local active, changed = {}, false
 			for _, m in ipairs(V.mods) do
 				local w = wanted(m)
@@ -758,9 +783,11 @@ function V.boot()
 			for _, m in ipairs(V.active) do
 				if m._ready and m.enabled and m.step and not m._busy then
 					m._busy = true
-					task.spawn(function() safe(m, m.step); m._busy = false end)
+					V.spawn(function() safe(m, m.step); m._busy = false end)
 				end
 			end
+			end)
+			if not ok then warn("[Vape] scheduler: " .. tostring(err)) end
 			task.wait(0.05)
 		end
 	end)
@@ -771,8 +798,9 @@ _G.VapeStop = function()
 	V.running = false
 	for _, m in ipairs(V.mods) do if m.enabled then m.enabled = false; safe(m, m.disable) end end
 	for _, c in ipairs(V.conns) do pcall(function() c:Disconnect() end) end
-	for d in pairs(V.drawings) do pcall(function() d:Remove() end) end
+	local ds = V.drawings
 	V.drawings = {}
+	for d in pairs(ds) do pcall(function() d:Remove() end) end
 	for _, cat in ipairs(V.CATEGORIES) do pcall(UI.RemoveTab, "Vape " .. cat) end
 	pcall(UI.RemoveTab, "Vape")
 	_G.VapeStop, _G.Vape = nil, nil

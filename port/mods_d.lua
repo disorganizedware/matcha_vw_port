@@ -162,7 +162,7 @@ do
 					if at then
 						V.markPlaced(V.roundPos(at))
 						local name = item.itemType
-						task.spawn(function() V.placeBlock(at, name) end)
+						V.spawn(function() V.placeBlock(at, name) end)
 					end
 				end
 				lastpos = cur
@@ -191,7 +191,7 @@ do
 		V.notify("Staff Detected (" .. why .. "): " .. plr.Name .. " (" .. plr.UserId .. ")", "StaffDetector", 30)
 		local mode = modes[m.opt("mode", 0) + 1]
 		if mode == "Uninject" then
-			task.spawn(function() if _G.VapeStop then _G.VapeStop() end end)
+			V.spawn(function() if _G.VapeStop then _G.VapeStop() end end)
 		elseif mode == "AutoConfig" then
 			for _, x in ipairs(V.mods) do
 				if not (safeMods[x.name] or x.cat == "Render") then V.set(x.id("on"), false) end
@@ -384,7 +384,7 @@ do
 				return
 			end
 			local layers, delay = m.opt("layers", 2), 1 / m.opt("cps", 50)
-			task.spawn(function()
+			V.spawn(function()
 				for layer = 1, layers do
 					local b = blocks[(layer - 1) % #blocks + 1]
 					for _, off in ipairs(pyramid(layer - 1, 3)) do
@@ -585,7 +585,9 @@ do
 		step = function(m)
 			if not V.alive() then return end
 			local me, left = V.root().Position, 0
-			for k, p in pairs(parts) do
+			local snap = {} -- placeBlock yields; never yield inside pairs over a table others can edit
+			for k, p in pairs(parts) do snap[k] = p end
+			for k, p in pairs(snap) do
 				if V.blockAt(p.pos) then
 					parts[k] = nil
 				else
@@ -617,12 +619,12 @@ do
 			if not (r1 and r1.OnClientEvent) then V.notify("OwlSummoned not available", "AutoWhisper", 3) return end
 			m.whisper = false
 			local ok = pcall(function()
-				conns[#conns + 1] = r1.OnClientEvent:Connect(function(a, b)
+				conns[#conns + 1] = V.connect(r1.OnClientEvent, function(a, b)
 					local user, target = a, b
 					if type(a) == "table" then user, target = a.user, a.target end
 					if user ~= V.lp or not target then return end
 					m.whisper = true
-					task.spawn(function()
+					V.spawn(function()
 						local lastFly, lastHeal = 0, 0
 						while m.whisper and m.enabled do
 							local c = target.Character
@@ -645,7 +647,7 @@ do
 					end)
 				end)
 				if r2 then
-					conns[#conns + 1] = r2.OnClientEvent:Connect(function(a)
+					conns[#conns + 1] = V.connect(r2.OnClientEvent, function(a)
 						if a == V.lp or (type(a) == "table" and a.user == V.lp) then m.whisper = false end
 					end)
 				end
@@ -697,7 +699,7 @@ do
 		end,
 		enable = function(m)
 			if modes[m.opt("mode", 0) + 1] ~= "On Key" then return end
-			task.spawn(function()
+			V.spawn(function()
 				for slot = 0, 2 do
 					setArmor(slot, (not worn(slot)) and bestArmor(slot) or nil)
 					task.wait(0.1)

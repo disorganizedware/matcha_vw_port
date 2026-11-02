@@ -235,7 +235,7 @@ do
 				local _, place = A.aimBlock(18)
 				if place then
 					local name = V.handName()
-					task.spawn(function() V.placeBlock(place, name) end)
+					V.spawn(function() V.placeBlock(place, name) end)
 				end
 			end
 		end,
@@ -401,7 +401,7 @@ do
 			local hit = A.aimBlock(18)
 			if hit then
 				nextHit = tick() + math.max(m.opt("time", 0.25), 0.04)
-				task.spawn(function() V.hitBlock(hit) end)
+				V.spawn(function() V.hitBlock(hit) end)
 			end
 		end,
 	}

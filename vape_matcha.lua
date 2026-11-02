@@ -20,7 +20,24 @@ function V.notify(msg, title, dur) notify(tostring(msg), title or "Vape", dur or
 function V.cam() return workspace.CurrentCamera end
 function V.flat(v) return Vector3.new(v.X, 0, v.Z) end
 function V.roundPos(v) return Vector3.new(math.round(v.X / 3) * 3, math.round(v.Y / 3) * 3, math.round(v.Z / 3) * 3) end
-function V.connect(signal, fn) local c = signal:Connect(fn); V.conns[#V.conns + 1] = c; return c end
+-- Matcha resumes threads and fires signal callbacks from C++: an uncaught Lua error there aborts app.exe
+-- (0xc0000409 in ucrtbase). Every thread and callback in Vape goes through these two, which never let one escape.
+local function report(err) warn("[Vape] " .. tostring(err)) end
+function V.spawn(fn, ...)
+	local args = { ... }
+	task.spawn(function()
+		local ok, err = pcall(fn, unpack(args))
+		if not ok then report(err) end
+	end)
+end
+function V.connect(signal, fn)
+	local c = signal:Connect(function(...)
+		local ok, err = pcall(fn, ...)
+		if not ok then report(err) end
+	end)
+	V.conns[#V.conns + 1] = c
+	return c
+end
 
 -- Drawing that is tracked for cleanup and starts hidden (fresh Drawings flash at 0,0)
 function V.draw(class, props)
@@ -60,8 +77,7 @@ function V.call(name, ...)
 end
 -- Same as V.call but on its own thread (InvokeServer yields)
 function V.callAsync(name, ...)
-	local args = { ... }
-	task.spawn(function() V.call(name, unpack(args)) end)
+	V.spawn(V.call, name, ...)
 end
 
 -- ===== UI value access (UI.GetValue is nil until the tab drew once) =====
@@ -69,7 +85,6 @@ end
 -- every frame without a Matcha UI call each time.
 local NIL = {}
 local vals = {}
-V._vals = vals
 function V.get(id, default)
 	local v = vals[id]
 	if v == nil then
@@ -321,6 +336,9 @@ function V.blockFolder()
 	return f
 end
 local function key(v) return math.round(v.X / 3) .. "," .. math.round(v.Y / 3) .. "," .. math.round(v.Z / 3) end
+-- V.blockGrid is only ever replaced, never edited, because other threads may be mid-`pairs` over it (editing it
+-- raised "invalid key to 'next'"). Blocks placed/broken since the last index live in these overlays instead.
+local placed, broken = {}, {}
 -- blocks never move, so a block's grid key is read once per instance (by Address); rescans only read new blocks
 local keyByAddr = {}
 function V.indexBlocks()
@@ -347,15 +365,21 @@ function V.indexBlocks()
 		end
 	end
 	keyByAddr = seen
+	placed, broken = {}, {}
 	V.blockGrid = g
 end
 function V.needBlocks() return tick() - V._blockUse < 10 or next(V.blockGrid) == nil end
 -- block lookups mark the grid as in use; the scheduler only re-indexes the map while that's recent
 V._blockUse = 0
 function V.grid() V._blockUse = tick(); return V.blockGrid end
-function V.blockAt(pos) V._blockUse = tick(); return V.blockGrid[key(pos)] end
+function V.blockAt(pos)
+	V._blockUse = tick()
+	local k = key(pos)
+	if broken[k] then return nil end
+	return placed[k] or V.blockGrid[k]
+end
 function V.blockPos(pos) return Vector3.new(math.round(pos.X / 3), math.round(pos.Y / 3), math.round(pos.Z / 3)) end -- block-engine grid coords
-function V.markPlaced(worldPos, part) V.blockGrid[key(worldPos)] = part or true end
+function V.markPlaced(worldPos, part) local k = key(worldPos); broken[k] = nil; placed[k] = part or true end
 
 -- place a block at a world position (snapped to grid) with held/any wool
 function V.placeBlock(worldPos, blockType)
@@ -377,8 +401,8 @@ function V.hitBlock(worldPos, normal)
 		hitPosition = bp * 3,
 		hitNormal = normal or Vector3.new(1, 0, 0),
 	})
-	local b = V.blockGrid[k]
-	if b and (b == true or not b.Parent) then V.blockGrid[k] = nil end
+	local b = placed[k] or V.blockGrid[k]
+	if b and (b == true or not b.Parent) then broken[k] = true; placed[k] = nil end
 	return ok, res
 end
 
@@ -624,7 +648,7 @@ function V.loadConfig(name)
 		local w = V.kbs[id]
 		if w then applyKey(w, kv) else pendingKey[id] = kv end
 	end
-	for k in pairs(vals) do vals[k] = nil end
+	vals = {}
 	return true
 end
 
@@ -703,7 +727,7 @@ function V.boot()
 		c:Button("Refresh list", refreshList)
 		local s2 = tab:Section("Session", "Right")
 		s2:Text("Vape for Matcha")
-		s2:Button("Uninject", function() task.spawn(_G.VapeStop) end)
+		s2:Button("Uninject", function() V.spawn(_G.VapeStop) end)
 	end)
 	if isfile("vape/autoload.txt") then
 		local name = readfile("vape/autoload.txt")
@@ -739,10 +763,11 @@ function V.boot()
 		end
 	end)
 
-	task.spawn(function()
+	V.spawn(function()
 		local n = 0
 		while V.running do
-			for k in pairs(vals) do vals[k] = nil end
+			local ok, err = pcall(function()
+			vals = {}
 			local active, changed = {}, false
 			for _, m in ipairs(V.mods) do
 				local w = wanted(m)
@@ -758,9 +783,11 @@ function V.boot()
 			for _, m in ipairs(V.active) do
 				if m._ready and m.enabled and m.step and not m._busy then
 					m._busy = true
-					task.spawn(function() safe(m, m.step); m._busy = false end)
+					V.spawn(function() safe(m, m.step); m._busy = false end)
 				end
 			end
+			end)
+			if not ok then warn("[Vape] scheduler: " .. tostring(err)) end
 			task.wait(0.05)
 		end
 	end)
@@ -771,8 +798,9 @@ _G.VapeStop = function()
 	V.running = false
 	for _, m in ipairs(V.mods) do if m.enabled then m.enabled = false; safe(m, m.disable) end end
 	for _, c in ipairs(V.conns) do pcall(function() c:Disconnect() end) end
-	for d in pairs(V.drawings) do pcall(function() d:Remove() end) end
+	local ds = V.drawings
 	V.drawings = {}
+	for d in pairs(ds) do pcall(function() d:Remove() end) end
 	for _, cat in ipairs(V.CATEGORIES) do pcall(UI.RemoveTab, "Vape " .. cat) end
 	pcall(UI.RemoveTab, "Vape")
 	_G.VapeStop, _G.Vape = nil, nil
@@ -1014,7 +1042,7 @@ do
 				local _, place = A.aimBlock(18)
 				if place then
 					local name = V.handName()
-					task.spawn(function() V.placeBlock(place, name) end)
+					V.spawn(function() V.placeBlock(place, name) end)
 				end
 			end
 		end,
@@ -1180,7 +1208,7 @@ do
 			local hit = A.aimBlock(18)
 			if hit then
 				nextHit = tick() + math.max(m.opt("time", 0.25), 0.04)
-				task.spawn(function() V.hitBlock(hit) end)
+				V.spawn(function() V.hitBlock(hit) end)
 			end
 		end,
 	}
@@ -1540,7 +1568,7 @@ do
 				m.jt, m.js, m.dir, m.began, m.t0, m.armUntil, m.hint = 0, 0, nil, false, tick(), 0, nil
 				local c = V.char()
 				m.lastHP = c and c:GetAttribute("Health")
-				task.spawn(function() local ok, e = pcall(run, m); if not ok then warn("[Vape] LongJump: " .. tostring(e)) end end)
+				V.spawn(function() local ok, e = pcall(run, m); if not ok then warn("[Vape] LongJump: " .. tostring(e)) end end)
 			end,
 			disable = function(m) m.jt, m.js, m.dir = 0, 0, nil end,
 			step = function(m)
@@ -1678,7 +1706,7 @@ do
 				local list = blocks()
 				if #list == 0 then V.notify("No suitable blocks available", "BlockIn", 3) off(m) return end
 				local origin = root.Position
-				task.spawn(function()
+				V.spawn(function()
 					local idx = 1
 					for _, o in ipairs(PATTERN) do
 						if not m.enabled then break end
@@ -2671,7 +2699,7 @@ do
 				if not cur[id] then
 					prev[id] = nil
 					if root and now - p.t < 1 and (p.pos - root.Position).Magnitude < 30 then
-						task.spawn(function()
+						V.spawn(function()
 							task.wait(6.5)
 							local c = p.plr.Character
 							local r = c and c:FindFirstChild("HumanoidRootPart")
@@ -2690,7 +2718,7 @@ do
 					if d < 40 and (not bd or d < bd) then killer, bd = p.plr, d end
 				end
 				if killer then
-					task.spawn(function()
+					V.spawn(function()
 						task.wait(7)
 						if not V.alive() then send(m, "Death", dn(killer)) end
 					end)
@@ -2797,7 +2825,7 @@ V.module{
 		V.set(m.id("on"), false)
 		local e = V.targetMouse(1000)
 		if not (e and V.getItem("guided_missile", true)) then return end
-		task.spawn(function()
+		V.spawn(function()
 			local ok, proj = V.call("FireGuidedProjectile", "guided_missile")
 			local model = ok and type(proj) ~= "boolean" and proj and proj.model
 			if not model then V.notify("Missile on cooldown.", "MissileTP", 3); return end
@@ -2818,7 +2846,7 @@ V.module{
 		V.set(m.id("on"), false)
 		local e = V.targetMouse(1000)
 		if not (e and V.getItem("raven", true)) then return end
-		task.spawn(function()
+		V.spawn(function()
 			local ok, proj = V.call("SpawnRaven")
 			local pp = ok and type(proj) ~= "boolean" and proj and proj.PrimaryPart
 			if not pp then return end
@@ -3030,7 +3058,7 @@ do
 					if at then
 						V.markPlaced(V.roundPos(at))
 						local name = item.itemType
-						task.spawn(function() V.placeBlock(at, name) end)
+						V.spawn(function() V.placeBlock(at, name) end)
 					end
 				end
 				lastpos = cur
@@ -3059,7 +3087,7 @@ do
 		V.notify("Staff Detected (" .. why .. "): " .. plr.Name .. " (" .. plr.UserId .. ")", "StaffDetector", 30)
 		local mode = modes[m.opt("mode", 0) + 1]
 		if mode == "Uninject" then
-			task.spawn(function() if _G.VapeStop then _G.VapeStop() end end)
+			V.spawn(function() if _G.VapeStop then _G.VapeStop() end end)
 		elseif mode == "AutoConfig" then
 			for _, x in ipairs(V.mods) do
 				if not (safeMods[x.name] or x.cat == "Render") then V.set(x.id("on"), false) end
@@ -3252,7 +3280,7 @@ do
 				return
 			end
 			local layers, delay = m.opt("layers", 2), 1 / m.opt("cps", 50)
-			task.spawn(function()
+			V.spawn(function()
 				for layer = 1, layers do
 					local b = blocks[(layer - 1) % #blocks + 1]
 					for _, off in ipairs(pyramid(layer - 1, 3)) do
@@ -3453,7 +3481,9 @@ do
 		step = function(m)
 			if not V.alive() then return end
 			local me, left = V.root().Position, 0
-			for k, p in pairs(parts) do
+			local snap = {} -- placeBlock yields; never yield inside pairs over a table others can edit
+			for k, p in pairs(parts) do snap[k] = p end
+			for k, p in pairs(snap) do
 				if V.blockAt(p.pos) then
 					parts[k] = nil
 				else
@@ -3485,12 +3515,12 @@ do
 			if not (r1 and r1.OnClientEvent) then V.notify("OwlSummoned not available", "AutoWhisper", 3) return end
 			m.whisper = false
 			local ok = pcall(function()
-				conns[#conns + 1] = r1.OnClientEvent:Connect(function(a, b)
+				conns[#conns + 1] = V.connect(r1.OnClientEvent, function(a, b)
 					local user, target = a, b
 					if type(a) == "table" then user, target = a.user, a.target end
 					if user ~= V.lp or not target then return end
 					m.whisper = true
-					task.spawn(function()
+					V.spawn(function()
 						local lastFly, lastHeal = 0, 0
 						while m.whisper and m.enabled do
 							local c = target.Character
@@ -3513,7 +3543,7 @@ do
 					end)
 				end)
 				if r2 then
-					conns[#conns + 1] = r2.OnClientEvent:Connect(function(a)
+					conns[#conns + 1] = V.connect(r2.OnClientEvent, function(a)
 						if a == V.lp or (type(a) == "table" and a.user == V.lp) then m.whisper = false end
 					end)
 				end
@@ -3565,7 +3595,7 @@ do
 		end,
 		enable = function(m)
 			if modes[m.opt("mode", 0) + 1] ~= "On Key" then return end
-			task.spawn(function()
+			V.spawn(function()
 				for slot = 0, 2 do
 					setArmor(slot, (not worn(slot)) and bestArmor(slot) or nil)
 					task.wait(0.1)

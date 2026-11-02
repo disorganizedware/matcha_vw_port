@@ -755,7 +755,7 @@ do
 				if not cur[id] then
 					prev[id] = nil
 					if root and now - p.t < 1 and (p.pos - root.Position).Magnitude < 30 then
-						task.spawn(function()
+						V.spawn(function()
 							task.wait(6.5)
 							local c = p.plr.Character
 							local r = c and c:FindFirstChild("HumanoidRootPart")
@@ -774,7 +774,7 @@ do
 					if d < 40 and (not bd or d < bd) then killer, bd = p.plr, d end
 				end
 				if killer then
-					task.spawn(function()
+					V.spawn(function()
 						task.wait(7)
 						if not V.alive() then send(m, "Death", dn(killer)) end
 					end)
@@ -881,7 +881,7 @@ V.module{
 		V.set(m.id("on"), false)
 		local e = V.targetMouse(1000)
 		if not (e and V.getItem("guided_missile", true)) then return end
-		task.spawn(function()
+		V.spawn(function()
 			local ok, proj = V.call("FireGuidedProjectile", "guided_missile")
 			local model = ok and type(proj) ~= "boolean" and proj and proj.model
 			if not model then V.notify("Missile on cooldown.", "MissileTP", 3); return end
@@ -902,7 +902,7 @@ V.module{
 		V.set(m.id("on"), false)
 		local e = V.targetMouse(1000)
 		if not (e and V.getItem("raven", true)) then return end
-		task.spawn(function()
+		V.spawn(function()
 			local ok, proj = V.call("SpawnRaven")
 			local pp = ok and type(proj) ~= "boolean" and proj and proj.PrimaryPart
 			if not pp then return end
