@@ -989,7 +989,7 @@ do
 		local range = nd and 12 or 0
 		if rc then range = math.max(range, math.min(V.get("vape_reach_range", 18), 17)) end
 		if hb then range = math.max(range, math.min(V.get("vape_hitboxes_expand", 14.4), 17)) end
-		if tick() - last < (nd and 0.12 or 0.3) then return end
+		if tick() - last < (nd and 1 / math.max(V.get("vape_noclickdelay_maxcps", 55), 1) or 0.3) then return end
 		local e = A.pickAimed(range, 35)
 		if e and (nd or e.Distance > 11) then
 			last = tick()
@@ -1080,7 +1080,8 @@ end
 
 V.module{
 	name = "NoClickDelay", cat = "Combat",
-	tip = "Approximation: every fresh left click also sends our own SwordHit (no client CPS cap; server cooldown still applies)",
+	tip = "Approximation: every fresh left click also sends our own SwordHit, capped at Max CPS (no client CPS cap; server cooldown still applies)",
+	ui = function(m, sec) sec:SliderInt(m.id("maxcps"), "Max CPS", 1, 60, 55) end,
 }
 
 V.module{
