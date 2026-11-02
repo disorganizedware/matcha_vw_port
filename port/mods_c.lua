@@ -6,23 +6,32 @@
 -- ponytail: walks Folders/Models up to 4 levels, cached per key; a tagged object that isn't named like its tag is missed.
 local scanCache = {}
 local SKIP = { Blocks = true, ItemDrops = true, Camera = true, Terrain = true }
-function V.scan(key, match, ttl)
-	local c = scanCache[key]
-	if c and tick() - c.t < (ttl or 2) then return c.list end
+-- one shared walk (every 2s) feeds every scan key; each key filters that flat list with its predicate
+local flat, flatT = {}, 0
+local function walkAll()
 	local list, chars = {}, {}
 	for _, p in ipairs(V.Players:GetPlayers()) do
 		if p.Character then chars[p.Character.Address] = true end
 	end
 	local function walk(parent, depth)
 		for _, ch in ipairs(parent:GetChildren()) do
-			if match(ch) then
-				list[#list + 1] = ch
-			elseif depth < 4 and not SKIP[ch.Name] and not chars[ch.Address] and (ch.ClassName == "Folder" or ch.ClassName == "Model") then
+			list[#list + 1] = ch
+			if depth < 4 and not SKIP[ch.Name] and not chars[ch.Address] and (ch.ClassName == "Folder" or ch.ClassName == "Model") then
 				walk(ch, depth + 1)
 			end
 		end
 	end
 	walk(workspace, 1)
+	return list
+end
+function V.scan(key, match, ttl)
+	local c = scanCache[key]
+	if c and tick() - c.t < (ttl or 2) then return c.list end
+	if tick() - flatT > 2 then flat, flatT = walkAll(), tick() end
+	local list = {}
+	for _, ch in ipairs(flat) do
+		if ch.Parent and match(ch) then list[#list + 1] = ch end
+	end
 	scanCache[key] = { t = tick(), list = list }
 	return list
 end
@@ -30,7 +39,7 @@ function V.bedMatch(i) return i.Name:lower() == "bed" end
 -- chests are blocks too (Blocks.chest with a ChestFolderValue, Blocks.personal_chest)
 function V.chests(personal)
 	local out = {}
-	for _, b in pairs(V.blockGrid) do
+	for _, b in pairs(V.grid()) do
 		if b ~= true and ((personal and b.Name == "personal_chest") or (not personal and b.Name == "chest")) then out[#out + 1] = b end
 	end
 	return out
@@ -38,7 +47,7 @@ end
 -- beds are block-engine blocks (in the Blocks folder the scan skips), so merge the block grid with the scan
 function V.beds()
 	local out, seen = {}, {}
-	for _, b in pairs(V.blockGrid) do
+	for _, b in pairs(V.grid()) do
 		if b ~= true and b.Name == "bed" and not seen[b.Address] then seen[b.Address] = true; out[#out + 1] = b end
 	end
 	for _, b in ipairs(V.scan("bed", V.bedMatch, 2)) do
@@ -105,15 +114,15 @@ function V.kit() return V.lp:GetAttribute("PlayingAsKit") or V.lp:GetAttribute("
 
 -- y below which you are falling into the void (lowest placed block - 50); nil until the block grid exists
 function V.voidY()
-	local c = V._voidY
-	if c and tick() - c.t < 10 then return c.y end
+	local c, g = V._voidY, V.grid()
+	if c and c.g == g then return c.y end
 	local lo
-	for k in pairs(V.blockGrid) do
+	for k in pairs(g) do
 		local y = tonumber(k:match(",(-?%d+),"))
 		if y and (not lo or y < lo) then lo = y end
 	end
 	local y = lo and (lo * 3 - 1.5 - 50) or nil
-	if y then V._voidY = { t = tick(), y = y } end
+	V._voidY = { g = g, y = y }
 	return y
 end
 

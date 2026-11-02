@@ -65,12 +65,22 @@ function V.callAsync(name, ...)
 end
 
 -- ===== UI value access (UI.GetValue is nil until the tab drew once) =====
+-- Values are cached and the cache is dropped every scheduler tick (~13/s), so render code can read options
+-- every frame without a Matcha UI call each time.
+local NIL = {}
+local vals = {}
+V._vals = vals
 function V.get(id, default)
-	local v = UI.GetValue(id)
-	if v == nil then return default end
+	local v = vals[id]
+	if v == nil then
+		v = UI.GetValue(id)
+		if v == nil then v = NIL end
+		vals[id] = v
+	end
+	if v == NIL then return default end
 	return v
 end
-function V.set(id, v) UI.SetValue(id, v) end
+function V.set(id, v) UI.SetValue(id, v); vals[id] = nil end
 
 -- ===== local character =====
 function V.char() return lp.Character end
@@ -86,9 +96,14 @@ function V.team(plr) return plr and plr:GetAttribute("Team") end
 function V.inMatch() return game.PlaceId ~= 6872265039 end
 
 -- ===== friends / targets (from the Vape settings tab, comma separated names) =====
+local setCache = {}
 local function nameSet(str)
-	local s = {}
-	for n in tostring(str or ""):gmatch("[^,%s]+") do s[n:lower()] = true end
+	str = tostring(str or "")
+	local s = setCache[str]
+	if s then return s end
+	s = {}
+	for n in str:gmatch("[^,%s]+") do s[n:lower()] = true end
+	setCache[str] = s
 	return s
 end
 function V.isFriend(plr) return plr and V.get("vape_friends_on", true) and nameSet(V.get("vape_friends", ""))[plr.Name:lower()] or false end
@@ -97,10 +112,21 @@ function V.isTarget(plr) return plr and nameSet(V.get("vape_targets", ""))[plr.N
 -- ===== entities =====
 -- V.entities: { Player?, Character, RootPart, Head, Humanoid, Health, MaxHealth, NPC, Targetable, Friend, Target, Id }
 -- refreshed every 0.25s; Health uses BedWars' Health attribute + shield attributes.
+-- shield attribute names per character, re-listed every 5s (GetAttributes is slow; Matcha returns names)
+local shieldNames = {}
 local function shield(char)
+	local c = shieldNames[char.Address]
+	if not c or tick() - c.t > 5 then
+		c = { t = tick() }
+		for _, n in ipairs(char:GetAttributes() or {}) do
+			if tostring(n):find("Shield") then c[#c + 1] = n end
+		end
+		shieldNames[char.Address] = c
+	end
 	local s = 0
-	for _, n in ipairs(char:GetAttributes() or {}) do -- Matcha: GetAttributes returns names
-		if tostring(n):find("Shield") then local v = char:GetAttribute(n); if type(v) == "number" and v > 0 then s = s + v end end
+	for _, n in ipairs(c) do
+		local v = char:GetAttribute(n)
+		if type(v) == "number" and v > 0 then s = s + v end
 	end
 	return s
 end
@@ -126,6 +152,8 @@ local function makeEntity(char, plr)
 	end
 	return e
 end
+-- NPC models are re-found every 2s; between scans only their health/position are refreshed
+local npcModels, npcScan = {}, 0
 function V.refreshEntities()
 	local list, pchars = {}, {}
 	for _, plr in ipairs(Players:GetPlayers()) do
@@ -137,8 +165,16 @@ function V.refreshEntities()
 		end
 	end
 	-- NPCs (dummies, monsters, drones): top-level workspace models with a Humanoid that aren't player characters
-	for _, m in ipairs(workspace:GetChildren()) do
-		if m.ClassName == "Model" and not pchars[m.Address] and m:FindFirstChildOfClass("Humanoid") and not m.Name:find("PreviewClone") then
+	if tick() - npcScan > 2 then
+		npcScan, npcModels = tick(), {}
+		for _, m in ipairs(workspace:GetChildren()) do
+			if m.ClassName == "Model" and not pchars[m.Address] and not m.Name:find("PreviewClone") and m:FindFirstChildOfClass("Humanoid") then
+				npcModels[#npcModels + 1] = m
+			end
+		end
+	end
+	for _, m in ipairs(npcModels) do
+		if m.Parent and not pchars[m.Address] then
 			local e = makeEntity(m, nil)
 			if e then list[#list + 1] = e end
 		end
@@ -284,24 +320,39 @@ function V.blockFolder()
 	return f
 end
 local function key(v) return math.round(v.X / 3) .. "," .. math.round(v.Y / 3) .. "," .. math.round(v.Z / 3) end
+-- blocks never move, so a block's grid key is read once per instance (by Address); rescans only read new blocks
+local keyByAddr = {}
 function V.indexBlocks()
 	local f = V.blockFolder()
-	local g = {}
+	local g, seen = {}, {}
 	if f then
 		for _, b in ipairs(f:GetChildren()) do
-			local p
-			if b.ClassName == "Part" or b.ClassName == "MeshPart" or b.ClassName == "UnionOperation" then
-				p = b.Position
-			elseif b.ClassName == "Model" then -- beds and other multi-part blocks
-				local pp = b.PrimaryPart
-				p = pp and pp.Position
+			local a = b.Address
+			local k = keyByAddr[a]
+			if k == nil then
+				local p
+				local cls = b.ClassName
+				if cls == "Part" or cls == "MeshPart" or cls == "UnionOperation" then
+					p = b.Position
+				elseif cls == "Model" then -- beds and other multi-part blocks
+					local pp = b.PrimaryPart
+					p = pp and pp.Position
+				end
+				k = p and key(p) or false
+				keyByAddr[a] = k
 			end
-			if p then g[key(p)] = b end
+			if k then g[k] = b end
+			seen[a] = k
 		end
 	end
+	keyByAddr = seen
 	V.blockGrid = g
 end
-function V.blockAt(pos) return V.blockGrid[key(pos)] end
+function V.needBlocks() return tick() - V._blockUse < 10 or next(V.blockGrid) == nil end
+-- block lookups mark the grid as in use; the scheduler only re-indexes the map while that's recent
+V._blockUse = 0
+function V.grid() V._blockUse = tick(); return V.blockGrid end
+function V.blockAt(pos) V._blockUse = tick(); return V.blockGrid[key(pos)] end
 function V.blockPos(pos) return Vector3.new(math.round(pos.X / 3), math.round(pos.Y / 3), math.round(pos.Z / 3)) end -- block-engine grid coords
 function V.markPlaced(worldPos, part) V.blockGrid[key(worldPos)] = part or true end
 
@@ -447,26 +498,42 @@ function V.boot()
 		return true
 	end
 
+	-- enable/disable transitions run in RenderStepped (enable may need WorldToScreen), but the toggle/keybind
+	-- state is only polled ~13/s by the scheduler; the per-frame loop touches active modules only.
+	V.active = {}
+	local pending = {}
 	V.connect(RunService.RenderStepped, function(dt)
-		for _, m in ipairs(V.mods) do
-			local w = wanted(m)
-			if w ~= m.enabled then
-				m.enabled = w
-				safe(m, w and m.enable or m.disable)
-				if not w and m.cleanup then for _, d in ipairs(m.cleanup) do V.undraw(d) end m.cleanup = nil end
+		if #pending > 0 then
+			for _, m in ipairs(pending) do
+				safe(m, m.enabled and m.enable or m.disable)
+				m._ready = m.enabled
+				if not m.enabled and m.cleanup then for _, d in ipairs(m.cleanup) do V.undraw(d) end m.cleanup = nil end
 			end
-			if m.enabled then safe(m, m.render, dt) end
+			pending = {}
+		end
+		for _, m in ipairs(V.active) do
+			if m.render and m._ready and m.enabled then safe(m, m.render, dt) end
 		end
 	end)
 
 	task.spawn(function()
 		local n = 0
 		while V.running do
-			if n % 5 == 0 then pcall(V.refreshEntities) end
-			if n % 40 == 0 and V.inMatch() then pcall(V.indexBlocks) end
-			n = n + 1
+			for k in pairs(vals) do vals[k] = nil end
+			local active, changed = {}, false
 			for _, m in ipairs(V.mods) do
-				if m.enabled and m.step and not m._busy then
+				local w = wanted(m)
+				if w ~= m.enabled then m.enabled = w; changed = true; pending[#pending + 1] = m end
+				if w then active[#active + 1] = m end
+			end
+			if changed then V.active = active end
+			if #V.active > 0 then
+				if n % 5 == 0 then pcall(V.refreshEntities) end
+				if n % 40 == 0 and V.inMatch() and V.needBlocks() then pcall(V.indexBlocks) end
+			end
+			n = n + 1
+			for _, m in ipairs(V.active) do
+				if m._ready and m.enabled and m.step and not m._busy then
 					m._busy = true
 					task.spawn(function() safe(m, m.step); m._busy = false end)
 				end

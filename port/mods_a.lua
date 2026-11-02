@@ -98,26 +98,32 @@ do
 		local x, y, z = k:match("^(-?%d+),(-?%d+),(-?%d+)$")
 		return tonumber(x), tonumber(y), tonumber(z)
 	end
+	-- lowest block Y, recomputed only when the grid is rebuilt
+	local lowGrid, lowY
 	function A.lowGround()
-		local low
-		for k in pairs(V.blockGrid) do
-			local _, y = gridXYZ(k)
-			if y and (not low or y < low) then low = y end
+		local g = V.grid()
+		if g ~= lowGrid then
+			lowGrid, lowY = g, nil
+			for k in pairs(g) do
+				local _, y = gridXYZ(k)
+				if y and (not lowY or y < lowY) then lowY = y end
+			end
 		end
-		return low and low * 3
+		return lowY and lowY * 3
 	end
-	-- top surface of the highest block below `pos` in its column
+	-- top surface of the highest block below `pos` in its column (walks down at most 60 cells)
 	function A.groundY(pos)
-		local cx, cz, best = math.round(pos.X / 3), math.round(pos.Z / 3), nil
-		for k in pairs(V.blockGrid) do
-			local x, y, z = gridXYZ(k)
-			if x == cx and z == cz and y * 3 < pos.Y - 3 and (not best or y > best) then best = y end
+		local x, z = math.round(pos.X / 3) * 3, math.round(pos.Z / 3) * 3
+		local y = math.round((pos.Y - 3) / 3) * 3
+		if y * 1 >= pos.Y - 3 then y = y - 3 end
+		for _ = 1, 60 do
+			if V.blockAt(Vector3.new(x, y, z)) then return y + 1.5 end
+			y = y - 3
 		end
-		return best and best * 3 + 1.5
 	end
 	function A.nearBlock(pos)
 		local bx, bd = nil, math.huge
-		for k in pairs(V.blockGrid) do
+		for k in pairs(V.grid()) do
 			local x, y, z = gridXYZ(k)
 			if x then
 				local d = (x * 3 - pos.X) ^ 2 + (z * 3 - pos.Z) ^ 2 + ((y * 3 - pos.Y) ^ 2) * 0.1

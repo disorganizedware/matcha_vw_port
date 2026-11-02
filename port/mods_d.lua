@@ -75,7 +75,7 @@ do
 	-- nearest existing block (within 21 studs) -> point on its 3-stud neighbourhood closest to pos
 	local function blockProximity(pos)
 		local mag, ret = 60, nil
-		for _, b in pairs(V.blockGrid) do
+		for _, b in pairs(V.grid()) do
 			if type(b) ~= "boolean" then
 				local bp = b.Position
 				if bp and math.abs(bp.X - pos.X) < 21 and math.abs(bp.Y - pos.Y) < 21 and math.abs(bp.Z - pos.Z) < 21 then
@@ -272,7 +272,7 @@ do
 		if not root then return nil end
 		local o, dir = cam.CFrame.Position, cam.CFrame.LookVector
 		local best, bestD = nil, 2.2
-		for _, b in pairs(V.blockGrid) do
+		for _, b in pairs(V.grid()) do
 			if type(b) ~= "boolean" then
 				local p = b.Position
 				if p and (p - root.Position).Magnitude < 14 then
@@ -485,7 +485,7 @@ do
 			local lo = Vector3.new(math.min(p1.X, p2.X), math.min(p1.Y, p2.Y), math.min(p1.Z, p2.Z))
 			local hi = Vector3.new(math.max(p1.X, p2.X), math.max(p1.Y, p2.Y), math.max(p1.Z, p2.Z))
 			local out, n = {}, 0
-			for _, b in pairs(V.blockGrid) do
+			for _, b in pairs(V.grid()) do
 				if type(b) ~= "boolean" then
 					local bp = b.Position
 					if bp and bp.X >= lo.X - 1 and bp.X <= hi.X + 1 and bp.Y >= lo.Y - 1 and bp.Y <= hi.Y + 1 and bp.Z >= lo.Z - 1 and bp.Z <= hi.Z + 1 and b:GetAttribute("PlacedByUserId") == V.lp.UserId then

@@ -128,7 +128,7 @@ do
 end
 
 -- ===== BedPlates =====
--- Beds come from the block grid (V.blockGrid), not CollectionService. Layers are drawn as a text line over each bed.
+-- Beds come from the block grid (V.grid()), not CollectionService. Layers are drawn as a text line over each bed.
 do
 	local DIRS = { Vector3.new(1, 0, 0), Vector3.new(-1, 0, 0), Vector3.new(0, 1, 0), Vector3.new(0, 0, 1), Vector3.new(0, 0, -1) }
 	local beds, lastGrid, lastScan = {}, nil, 0
@@ -149,7 +149,7 @@ do
 	end
 	local function scan(m)
 		local seen = {}
-		for _, b in pairs(V.blockGrid) do
+		for _, b in pairs(V.grid()) do
 			if b ~= true and b.Name == "bed" then
 				local id = b.Address
 				local list = {}
@@ -177,8 +177,8 @@ do
 		enable = function(m) beds, lastGrid, lastScan = {}, nil, 0 end,
 		disable = function(m) beds = {} end,
 		step = function(m)
-			if lastGrid ~= V.blockGrid or tick() - lastScan > 3 then
-				lastGrid, lastScan = V.blockGrid, tick()
+			if lastGrid ~= V.grid() or tick() - lastScan > 3 then
+				lastGrid, lastScan = V.grid(), tick()
 				scan(m)
 			end
 		end,
@@ -278,8 +278,8 @@ do
 		enable = function(m) lastGrid, targets, cd = nil, {}, 0 end,
 		step = function(m)
 			if tick() < cd or not V.alive() then return end
-			if lastGrid ~= V.blockGrid then
-				lastGrid, targets = V.blockGrid, {}
+			if lastGrid ~= V.grid() then
+				lastGrid, targets = V.grid(), {}
 				local custom = names(m.opt("custom", ""))
 				for _, b in pairs(lastGrid) do
 					if b ~= true then

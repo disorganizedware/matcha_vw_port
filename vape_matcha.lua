@@ -65,12 +65,22 @@ function V.callAsync(name, ...)
 end
 
 -- ===== UI value access (UI.GetValue is nil until the tab drew once) =====
+-- Values are cached and the cache is dropped every scheduler tick (~13/s), so render code can read options
+-- every frame without a Matcha UI call each time.
+local NIL = {}
+local vals = {}
+V._vals = vals
 function V.get(id, default)
-	local v = UI.GetValue(id)
-	if v == nil then return default end
+	local v = vals[id]
+	if v == nil then
+		v = UI.GetValue(id)
+		if v == nil then v = NIL end
+		vals[id] = v
+	end
+	if v == NIL then return default end
 	return v
 end
-function V.set(id, v) UI.SetValue(id, v) end
+function V.set(id, v) UI.SetValue(id, v); vals[id] = nil end
 
 -- ===== local character =====
 function V.char() return lp.Character end
@@ -86,9 +96,14 @@ function V.team(plr) return plr and plr:GetAttribute("Team") end
 function V.inMatch() return game.PlaceId ~= 6872265039 end
 
 -- ===== friends / targets (from the Vape settings tab, comma separated names) =====
+local setCache = {}
 local function nameSet(str)
-	local s = {}
-	for n in tostring(str or ""):gmatch("[^,%s]+") do s[n:lower()] = true end
+	str = tostring(str or "")
+	local s = setCache[str]
+	if s then return s end
+	s = {}
+	for n in str:gmatch("[^,%s]+") do s[n:lower()] = true end
+	setCache[str] = s
 	return s
 end
 function V.isFriend(plr) return plr and V.get("vape_friends_on", true) and nameSet(V.get("vape_friends", ""))[plr.Name:lower()] or false end
@@ -97,10 +112,21 @@ function V.isTarget(plr) return plr and nameSet(V.get("vape_targets", ""))[plr.N
 -- ===== entities =====
 -- V.entities: { Player?, Character, RootPart, Head, Humanoid, Health, MaxHealth, NPC, Targetable, Friend, Target, Id }
 -- refreshed every 0.25s; Health uses BedWars' Health attribute + shield attributes.
+-- shield attribute names per character, re-listed every 5s (GetAttributes is slow; Matcha returns names)
+local shieldNames = {}
 local function shield(char)
+	local c = shieldNames[char.Address]
+	if not c or tick() - c.t > 5 then
+		c = { t = tick() }
+		for _, n in ipairs(char:GetAttributes() or {}) do
+			if tostring(n):find("Shield") then c[#c + 1] = n end
+		end
+		shieldNames[char.Address] = c
+	end
 	local s = 0
-	for _, n in ipairs(char:GetAttributes() or {}) do -- Matcha: GetAttributes returns names
-		if tostring(n):find("Shield") then local v = char:GetAttribute(n); if type(v) == "number" and v > 0 then s = s + v end end
+	for _, n in ipairs(c) do
+		local v = char:GetAttribute(n)
+		if type(v) == "number" and v > 0 then s = s + v end
 	end
 	return s
 end
@@ -126,6 +152,8 @@ local function makeEntity(char, plr)
 	end
 	return e
 end
+-- NPC models are re-found every 2s; between scans only their health/position are refreshed
+local npcModels, npcScan = {}, 0
 function V.refreshEntities()
 	local list, pchars = {}, {}
 	for _, plr in ipairs(Players:GetPlayers()) do
@@ -137,8 +165,16 @@ function V.refreshEntities()
 		end
 	end
 	-- NPCs (dummies, monsters, drones): top-level workspace models with a Humanoid that aren't player characters
-	for _, m in ipairs(workspace:GetChildren()) do
-		if m.ClassName == "Model" and not pchars[m.Address] and m:FindFirstChildOfClass("Humanoid") and not m.Name:find("PreviewClone") then
+	if tick() - npcScan > 2 then
+		npcScan, npcModels = tick(), {}
+		for _, m in ipairs(workspace:GetChildren()) do
+			if m.ClassName == "Model" and not pchars[m.Address] and not m.Name:find("PreviewClone") and m:FindFirstChildOfClass("Humanoid") then
+				npcModels[#npcModels + 1] = m
+			end
+		end
+	end
+	for _, m in ipairs(npcModels) do
+		if m.Parent and not pchars[m.Address] then
 			local e = makeEntity(m, nil)
 			if e then list[#list + 1] = e end
 		end
@@ -284,24 +320,39 @@ function V.blockFolder()
 	return f
 end
 local function key(v) return math.round(v.X / 3) .. "," .. math.round(v.Y / 3) .. "," .. math.round(v.Z / 3) end
+-- blocks never move, so a block's grid key is read once per instance (by Address); rescans only read new blocks
+local keyByAddr = {}
 function V.indexBlocks()
 	local f = V.blockFolder()
-	local g = {}
+	local g, seen = {}, {}
 	if f then
 		for _, b in ipairs(f:GetChildren()) do
-			local p
-			if b.ClassName == "Part" or b.ClassName == "MeshPart" or b.ClassName == "UnionOperation" then
-				p = b.Position
-			elseif b.ClassName == "Model" then -- beds and other multi-part blocks
-				local pp = b.PrimaryPart
-				p = pp and pp.Position
+			local a = b.Address
+			local k = keyByAddr[a]
+			if k == nil then
+				local p
+				local cls = b.ClassName
+				if cls == "Part" or cls == "MeshPart" or cls == "UnionOperation" then
+					p = b.Position
+				elseif cls == "Model" then -- beds and other multi-part blocks
+					local pp = b.PrimaryPart
+					p = pp and pp.Position
+				end
+				k = p and key(p) or false
+				keyByAddr[a] = k
 			end
-			if p then g[key(p)] = b end
+			if k then g[k] = b end
+			seen[a] = k
 		end
 	end
+	keyByAddr = seen
 	V.blockGrid = g
 end
-function V.blockAt(pos) return V.blockGrid[key(pos)] end
+function V.needBlocks() return tick() - V._blockUse < 10 or next(V.blockGrid) == nil end
+-- block lookups mark the grid as in use; the scheduler only re-indexes the map while that's recent
+V._blockUse = 0
+function V.grid() V._blockUse = tick(); return V.blockGrid end
+function V.blockAt(pos) V._blockUse = tick(); return V.blockGrid[key(pos)] end
 function V.blockPos(pos) return Vector3.new(math.round(pos.X / 3), math.round(pos.Y / 3), math.round(pos.Z / 3)) end -- block-engine grid coords
 function V.markPlaced(worldPos, part) V.blockGrid[key(worldPos)] = part or true end
 
@@ -447,26 +498,42 @@ function V.boot()
 		return true
 	end
 
+	-- enable/disable transitions run in RenderStepped (enable may need WorldToScreen), but the toggle/keybind
+	-- state is only polled ~13/s by the scheduler; the per-frame loop touches active modules only.
+	V.active = {}
+	local pending = {}
 	V.connect(RunService.RenderStepped, function(dt)
-		for _, m in ipairs(V.mods) do
-			local w = wanted(m)
-			if w ~= m.enabled then
-				m.enabled = w
-				safe(m, w and m.enable or m.disable)
-				if not w and m.cleanup then for _, d in ipairs(m.cleanup) do V.undraw(d) end m.cleanup = nil end
+		if #pending > 0 then
+			for _, m in ipairs(pending) do
+				safe(m, m.enabled and m.enable or m.disable)
+				m._ready = m.enabled
+				if not m.enabled and m.cleanup then for _, d in ipairs(m.cleanup) do V.undraw(d) end m.cleanup = nil end
 			end
-			if m.enabled then safe(m, m.render, dt) end
+			pending = {}
+		end
+		for _, m in ipairs(V.active) do
+			if m.render and m._ready and m.enabled then safe(m, m.render, dt) end
 		end
 	end)
 
 	task.spawn(function()
 		local n = 0
 		while V.running do
-			if n % 5 == 0 then pcall(V.refreshEntities) end
-			if n % 40 == 0 and V.inMatch() then pcall(V.indexBlocks) end
-			n = n + 1
+			for k in pairs(vals) do vals[k] = nil end
+			local active, changed = {}, false
 			for _, m in ipairs(V.mods) do
-				if m.enabled and m.step and not m._busy then
+				local w = wanted(m)
+				if w ~= m.enabled then m.enabled = w; changed = true; pending[#pending + 1] = m end
+				if w then active[#active + 1] = m end
+			end
+			if changed then V.active = active end
+			if #V.active > 0 then
+				if n % 5 == 0 then pcall(V.refreshEntities) end
+				if n % 40 == 0 and V.inMatch() and V.needBlocks() then pcall(V.indexBlocks) end
+			end
+			n = n + 1
+			for _, m in ipairs(V.active) do
+				if m._ready and m.enabled and m.step and not m._busy then
 					m._busy = true
 					task.spawn(function() safe(m, m.step); m._busy = false end)
 				end
@@ -587,26 +654,32 @@ do
 		local x, y, z = k:match("^(-?%d+),(-?%d+),(-?%d+)$")
 		return tonumber(x), tonumber(y), tonumber(z)
 	end
+	-- lowest block Y, recomputed only when the grid is rebuilt
+	local lowGrid, lowY
 	function A.lowGround()
-		local low
-		for k in pairs(V.blockGrid) do
-			local _, y = gridXYZ(k)
-			if y and (not low or y < low) then low = y end
+		local g = V.grid()
+		if g ~= lowGrid then
+			lowGrid, lowY = g, nil
+			for k in pairs(g) do
+				local _, y = gridXYZ(k)
+				if y and (not lowY or y < lowY) then lowY = y end
+			end
 		end
-		return low and low * 3
+		return lowY and lowY * 3
 	end
-	-- top surface of the highest block below `pos` in its column
+	-- top surface of the highest block below `pos` in its column (walks down at most 60 cells)
 	function A.groundY(pos)
-		local cx, cz, best = math.round(pos.X / 3), math.round(pos.Z / 3), nil
-		for k in pairs(V.blockGrid) do
-			local x, y, z = gridXYZ(k)
-			if x == cx and z == cz and y * 3 < pos.Y - 3 and (not best or y > best) then best = y end
+		local x, z = math.round(pos.X / 3) * 3, math.round(pos.Z / 3) * 3
+		local y = math.round((pos.Y - 3) / 3) * 3
+		if y * 1 >= pos.Y - 3 then y = y - 3 end
+		for _ = 1, 60 do
+			if V.blockAt(Vector3.new(x, y, z)) then return y + 1.5 end
+			y = y - 3
 		end
-		return best and best * 3 + 1.5
 	end
 	function A.nearBlock(pos)
 		local bx, bd = nil, math.huge
-		for k in pairs(V.blockGrid) do
+		for k in pairs(V.grid()) do
 			local x, y, z = gridXYZ(k)
 			if x then
 				local d = (x * 3 - pos.X) ^ 2 + (z * 3 - pos.Z) ^ 2 + ((y * 3 - pos.Y) ^ 2) * 0.1
@@ -1626,23 +1699,32 @@ end
 -- ponytail: walks Folders/Models up to 4 levels, cached per key; a tagged object that isn't named like its tag is missed.
 local scanCache = {}
 local SKIP = { Blocks = true, ItemDrops = true, Camera = true, Terrain = true }
-function V.scan(key, match, ttl)
-	local c = scanCache[key]
-	if c and tick() - c.t < (ttl or 2) then return c.list end
+-- one shared walk (every 2s) feeds every scan key; each key filters that flat list with its predicate
+local flat, flatT = {}, 0
+local function walkAll()
 	local list, chars = {}, {}
 	for _, p in ipairs(V.Players:GetPlayers()) do
 		if p.Character then chars[p.Character.Address] = true end
 	end
 	local function walk(parent, depth)
 		for _, ch in ipairs(parent:GetChildren()) do
-			if match(ch) then
-				list[#list + 1] = ch
-			elseif depth < 4 and not SKIP[ch.Name] and not chars[ch.Address] and (ch.ClassName == "Folder" or ch.ClassName == "Model") then
+			list[#list + 1] = ch
+			if depth < 4 and not SKIP[ch.Name] and not chars[ch.Address] and (ch.ClassName == "Folder" or ch.ClassName == "Model") then
 				walk(ch, depth + 1)
 			end
 		end
 	end
 	walk(workspace, 1)
+	return list
+end
+function V.scan(key, match, ttl)
+	local c = scanCache[key]
+	if c and tick() - c.t < (ttl or 2) then return c.list end
+	if tick() - flatT > 2 then flat, flatT = walkAll(), tick() end
+	local list = {}
+	for _, ch in ipairs(flat) do
+		if ch.Parent and match(ch) then list[#list + 1] = ch end
+	end
 	scanCache[key] = { t = tick(), list = list }
 	return list
 end
@@ -1650,7 +1732,7 @@ function V.bedMatch(i) return i.Name:lower() == "bed" end
 -- chests are blocks too (Blocks.chest with a ChestFolderValue, Blocks.personal_chest)
 function V.chests(personal)
 	local out = {}
-	for _, b in pairs(V.blockGrid) do
+	for _, b in pairs(V.grid()) do
 		if b ~= true and ((personal and b.Name == "personal_chest") or (not personal and b.Name == "chest")) then out[#out + 1] = b end
 	end
 	return out
@@ -1658,7 +1740,7 @@ end
 -- beds are block-engine blocks (in the Blocks folder the scan skips), so merge the block grid with the scan
 function V.beds()
 	local out, seen = {}, {}
-	for _, b in pairs(V.blockGrid) do
+	for _, b in pairs(V.grid()) do
 		if b ~= true and b.Name == "bed" and not seen[b.Address] then seen[b.Address] = true; out[#out + 1] = b end
 	end
 	for _, b in ipairs(V.scan("bed", V.bedMatch, 2)) do
@@ -1725,15 +1807,15 @@ function V.kit() return V.lp:GetAttribute("PlayingAsKit") or V.lp:GetAttribute("
 
 -- y below which you are falling into the void (lowest placed block - 50); nil until the block grid exists
 function V.voidY()
-	local c = V._voidY
-	if c and tick() - c.t < 10 then return c.y end
+	local c, g = V._voidY, V.grid()
+	if c and c.g == g then return c.y end
 	local lo
-	for k in pairs(V.blockGrid) do
+	for k in pairs(g) do
 		local y = tonumber(k:match(",(-?%d+),"))
 		if y and (not lo or y < lo) then lo = y end
 	end
 	local y = lo and (lo * 3 - 1.5 - 50) or nil
-	if y then V._voidY = { t = tick(), y = y } end
+	V._voidY = { g = g, y = y }
 	return y
 end
 
@@ -2638,7 +2720,7 @@ do
 	-- nearest existing block (within 21 studs) -> point on its 3-stud neighbourhood closest to pos
 	local function blockProximity(pos)
 		local mag, ret = 60, nil
-		for _, b in pairs(V.blockGrid) do
+		for _, b in pairs(V.grid()) do
 			if type(b) ~= "boolean" then
 				local bp = b.Position
 				if bp and math.abs(bp.X - pos.X) < 21 and math.abs(bp.Y - pos.Y) < 21 and math.abs(bp.Z - pos.Z) < 21 then
@@ -2835,7 +2917,7 @@ do
 		if not root then return nil end
 		local o, dir = cam.CFrame.Position, cam.CFrame.LookVector
 		local best, bestD = nil, 2.2
-		for _, b in pairs(V.blockGrid) do
+		for _, b in pairs(V.grid()) do
 			if type(b) ~= "boolean" then
 				local p = b.Position
 				if p and (p - root.Position).Magnitude < 14 then
@@ -3048,7 +3130,7 @@ do
 			local lo = Vector3.new(math.min(p1.X, p2.X), math.min(p1.Y, p2.Y), math.min(p1.Z, p2.Z))
 			local hi = Vector3.new(math.max(p1.X, p2.X), math.max(p1.Y, p2.Y), math.max(p1.Z, p2.Z))
 			local out, n = {}, 0
-			for _, b in pairs(V.blockGrid) do
+			for _, b in pairs(V.grid()) do
 				if type(b) ~= "boolean" then
 					local bp = b.Position
 					if bp and bp.X >= lo.X - 1 and bp.X <= hi.X + 1 and bp.Y >= lo.Y - 1 and bp.Y <= hi.Y + 1 and bp.Z >= lo.Z - 1 and bp.Z <= hi.Z + 1 and b:GetAttribute("PlacedByUserId") == V.lp.UserId then
@@ -3591,7 +3673,7 @@ do
 end
 
 -- ===== BedPlates =====
--- Beds come from the block grid (V.blockGrid), not CollectionService. Layers are drawn as a text line over each bed.
+-- Beds come from the block grid (V.grid()), not CollectionService. Layers are drawn as a text line over each bed.
 do
 	local DIRS = { Vector3.new(1, 0, 0), Vector3.new(-1, 0, 0), Vector3.new(0, 1, 0), Vector3.new(0, 0, 1), Vector3.new(0, 0, -1) }
 	local beds, lastGrid, lastScan = {}, nil, 0
@@ -3612,7 +3694,7 @@ do
 	end
 	local function scan(m)
 		local seen = {}
-		for _, b in pairs(V.blockGrid) do
+		for _, b in pairs(V.grid()) do
 			if b ~= true and b.Name == "bed" then
 				local id = b.Address
 				local list = {}
@@ -3640,8 +3722,8 @@ do
 		enable = function(m) beds, lastGrid, lastScan = {}, nil, 0 end,
 		disable = function(m) beds = {} end,
 		step = function(m)
-			if lastGrid ~= V.blockGrid or tick() - lastScan > 3 then
-				lastGrid, lastScan = V.blockGrid, tick()
+			if lastGrid ~= V.grid() or tick() - lastScan > 3 then
+				lastGrid, lastScan = V.grid(), tick()
 				scan(m)
 			end
 		end,
@@ -3741,8 +3823,8 @@ do
 		enable = function(m) lastGrid, targets, cd = nil, {}, 0 end,
 		step = function(m)
 			if tick() < cd or not V.alive() then return end
-			if lastGrid ~= V.blockGrid then
-				lastGrid, targets = V.blockGrid, {}
+			if lastGrid ~= V.grid() then
+				lastGrid, targets = V.grid(), {}
 				local custom = names(m.opt("custom", ""))
 				for _, b in pairs(lastGrid) do
 					if b ~= true then
