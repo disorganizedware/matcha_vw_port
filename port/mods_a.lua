@@ -143,7 +143,7 @@ end
 -- The game's own swing still happens, so Reach/HitBoxes only add a hit when the target is beyond native reach (11 studs).
 do
 	local was, last = false, 0
-	V.connect(V.RunService.RenderStepped, function()
+	V.onRender(function()
 		local down = ismouse1pressed()
 		local edge = down and not was
 		was = down
@@ -153,7 +153,7 @@ do
 		local range = nd and 12 or 0
 		if rc then range = math.max(range, math.min(V.get("vape_reach_range", 18), 17)) end
 		if hb then range = math.max(range, math.min(V.get("vape_hitboxes_expand", 14.4), 17)) end
-		if tick() - last < (nd and 0.05 or 0.3) then return end
+		if tick() - last < (nd and 0.12 or 0.3) then return end
 		local e = A.pickAimed(range, 35)
 		if e and (nd or e.Distance > 11) then
 			last = tick()

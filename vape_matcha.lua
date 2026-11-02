@@ -23,13 +23,20 @@ function V.roundPos(v) return Vector3.new(math.round(v.X / 3) * 3, math.round(v.
 -- Matcha resumes threads and fires signal callbacks from C++: an uncaught Lua error there aborts app.exe
 -- (0xc0000409 in ucrtbase). Every thread and callback in Vape goes through these two, which never let one escape.
 local function report(err) warn("[Vape] " .. tostring(err)) end
+-- Remotes fired from inside a RenderStepped callback crashed the game (NoClickDelay's per-click SwordHit).
+-- While the render loop runs, V.spawn/V.call queue their work; the net pump thread runs it right after.
+local inRender, netQueue = false, {}
 function V.spawn(fn, ...)
 	local args = { ... }
+	if inRender then netQueue[#netQueue + 1] = { fn, args }; return end
 	task.spawn(function()
 		local ok, err = pcall(fn, unpack(args))
 		if not ok then report(err) end
 	end)
 end
+V.renderHooks = {}
+-- per-frame callback that runs inside the core render loop (so remote calls in it are deferred)
+function V.onRender(fn) V.renderHooks[#V.renderHooks + 1] = fn end
 function V.connect(signal, fn)
 	local c = signal:Connect(function(...)
 		local ok, err = pcall(fn, ...)
@@ -66,6 +73,7 @@ function V.remote(name)
 end
 -- Fires a RemoteEvent or invokes a RemoteFunction. Returns ok, result. Never throws.
 function V.call(name, ...)
+	if inRender then V.spawn(V.call, name, ...); return true end -- deferred: no result inside a render frame
 	local r = V.remote(name)
 	if not r then return false, "no remote " .. name end
 	local args = { ... }
@@ -750,6 +758,12 @@ function V.boot()
 	V.active = {}
 	local pending = {}
 	V.connect(RunService.RenderStepped, function(dt)
+		inRender = true
+		local ok, err = pcall(function()
+		for _, fn in ipairs(V.renderHooks) do
+			local ok2, e2 = pcall(fn, dt)
+			if not ok2 then report(e2) end
+		end
 		if #pending > 0 then
 			for _, m in ipairs(pending) do
 				safe(m, m.enabled and m.enable or m.disable)
@@ -760,6 +774,21 @@ function V.boot()
 		end
 		for _, m in ipairs(V.active) do
 			if m.render and m._ready and m.enabled then safe(m, m.render, dt) end
+		end
+		end)
+		inRender = false
+		if not ok then report(err) end
+	end)
+
+	-- net pump: runs work queued during render frames, off the render callback
+	V.spawn(function()
+		while V.running do
+			if #netQueue > 0 then
+				local q = netQueue
+				netQueue = {}
+				for _, job in ipairs(q) do V.spawn(job[1], unpack(job[2])) end
+			end
+			task.wait()
 		end
 	end)
 
@@ -950,7 +979,7 @@ end
 -- The game's own swing still happens, so Reach/HitBoxes only add a hit when the target is beyond native reach (11 studs).
 do
 	local was, last = false, 0
-	V.connect(V.RunService.RenderStepped, function()
+	V.onRender(function()
 		local down = ismouse1pressed()
 		local edge = down and not was
 		was = down
@@ -960,7 +989,7 @@ do
 		local range = nd and 12 or 0
 		if rc then range = math.max(range, math.min(V.get("vape_reach_range", 18), 17)) end
 		if hb then range = math.max(range, math.min(V.get("vape_hitboxes_expand", 14.4), 17)) end
-		if tick() - last < (nd and 0.05 or 0.3) then return end
+		if tick() - last < (nd and 0.12 or 0.3) then return end
 		local e = A.pickAimed(range, 35)
 		if e and (nd or e.Distance > 11) then
 			last = tick()
